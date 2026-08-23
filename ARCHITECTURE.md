@@ -33,6 +33,7 @@ site/
 src/toolburn/
   __init__.py
   cli.py
+  pass_receipt.py
   schema.py
 tests/
 ```
@@ -46,6 +47,7 @@ Phase 1 includes:
 - parser and reporter contracts
 - offline validation
 - compact agent-facing output shapes
+- versioned, content-free pass and comparison receipts
 
 Phase 1 excludes:
 
@@ -69,6 +71,8 @@ actor -> tool/command -> payload/output -> model-visible context -> token event 
 The schema starts with actors, sessions, tools, invocations, token events, and
 burn paths. Adapters and policy files arrive after the offline profiler can
 prove value against real traces.
+
+Pass receipts use the exact Codex session identity rather than guessing the newest file. The shared parser owns completed-turn boundaries, usage deltas, tool-cost categories, repetition signatures, failures, and privacy-safe output. Optional DarkExec episode evidence may identify the preceding Harness boundary; its absence never prevents a generic receipt. Toolburn reports measurements only. Harness Ops owns pass method and Harness Gym owns comparison judgment.
 
 ## Attribution Rule
 

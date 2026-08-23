@@ -71,6 +71,19 @@ toolburn sources
 
 ## Commands Humans Actually Use
 
+### Harness And Efficiency Pass Receipts
+
+```bash
+toolburn pass current
+toolburn pass previous
+toolburn pass <session-id> --turn <turn-id>
+toolburn compare <baseline-session> <candidate-session>
+```
+
+`pass current` resolves `$CODEX_THREAD_ID` and emits a versioned, content-free JSON receipt for completed ordinary turns since the previous recorded Harness turn when DarkExec episode evidence is available. `pass previous` isolates the immediately preceding completed turn for an Efficiency pass. Pass receipts include usage, failures, compactions, tool categories, repeated command and call fingerprints, compact operation runs, and the largest output producers without prompts, messages, raw arguments, or raw output.
+
+`compare` reports factual candidate-minus-baseline deltas. It does not rate the work or claim that a Harness intervention caused the difference.
+
 ### Recent Burn
 
 ```bash
@@ -170,11 +183,7 @@ References:
 
 ## Current Status
 
-Toolburn currently ships the Phase 1 offline profiler spine. It can scan local
-Codex/OpenClaw JSONL evidence into SQLite and report recent token burn by actor,
-session, source, or tool. GitHub Copilot CLI session-state parsing is
-experimental. Claude Code is listed as untested until a real local transcript is
-confirmed.
+Toolburn currently ships the offline profiler spine and versioned pass receipts. It can scan local Codex/OpenClaw JSONL evidence into SQLite, report recent token burn by actor, session, source, or tool, summarize the exact current or preceding Codex execution for a Harness or Efficiency pass, and compare two bounded executions without making a causal claim. GitHub Copilot CLI session-state parsing is experimental. Claude Code is listed as untested until a real local transcript is confirmed.
 
 The active build plan is:
 

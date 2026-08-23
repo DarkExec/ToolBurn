@@ -29,10 +29,12 @@ require_file docs/exec-plans/active/toolburn-3-phase-plan.md
 require_file docs/exec-plans/completed/README.md
 require_file src/toolburn/__init__.py
 require_file src/toolburn/cli.py
+require_file src/toolburn/pass_receipt.py
 require_file src/toolburn/report.py
 require_file src/toolburn/scan.py
 require_file src/toolburn/schema.py
 require_file tests/test_cli.py
+require_file tests/test_pass_receipt.py
 require_file tests/test_schema.py
 require_file scripts/install-local.sh
 require_file scripts/validate.sh
@@ -64,6 +66,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 grep -q 'Local-first token burn profiler' /tmp/toolburn-cli-help.txt
 ./toolburn recent --help >/tmp/toolburn-recent-help.txt
 grep -q 'lookback window' /tmp/toolburn-recent-help.txt
+./toolburn pass --help >/tmp/toolburn-pass-help.txt
+grep -q 'current, previous' /tmp/toolburn-pass-help.txt
+./toolburn compare --help >/tmp/toolburn-compare-help.txt
+grep -q 'baseline session UUID' /tmp/toolburn-compare-help.txt
 tmp_bin="$(mktemp -d /tmp/toolburn-bin-XXXXXX)"
 TOOLBURN_BIN_DIR="$tmp_bin" ./scripts/install-local.sh >/tmp/toolburn-install.txt
 "$tmp_bin/toolburn" --help >/tmp/toolburn-installed-help.txt
