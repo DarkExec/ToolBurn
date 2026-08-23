@@ -10,7 +10,11 @@ from pathlib import Path
 from unittest import mock
 
 from toolburn.cli import main
-from toolburn.pass_receipt import build_pass_receipt
+from toolburn.pass_receipt import (
+    build_pass_receipt,
+    incomplete_failure_evidence,
+    possible_failed_output,
+)
 
 
 SESSION_ID = "11111111-2222-4333-8444-555555555555"
@@ -64,6 +68,25 @@ def fixture_rows() -> list[dict]:
             "payload": {"type": "custom_tool_call", "call_id": "three", "name": "exec", "input": 'await tools.exec_command({"cmd":"./scripts/validate.sh"})'},
         },
         {"timestamp": "2026-08-23T00:01:05Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "three", "output": "{\"exit_code\":1}"}},
+        {
+            "timestamp": "2026-08-23T00:01:05.1Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "four",
+                "name": "exec",
+                "input": 'const r = await tools.exec_command({"cmd":"npx playwright test"}); text(r.output);',
+            },
+        },
+        {
+            "timestamp": "2026-08-23T00:01:05.2Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "four",
+                "output": "Script completed\nOutput:\nError: Cannot find module '@playwright/test'\ncode: MODULE_NOT_FOUND",
+            },
+        },
         {"timestamp": "2026-08-23T00:01:06Z", "type": "event_msg", "payload": {"type": "token_count", "info": usage(250, 200, 50, 50)}},
         {"timestamp": "2026-08-23T00:01:07Z", "type": "event_msg", "payload": {"type": "task_complete", "turn_id": TURN_TWO, "duration_ms": 7000}},
         {"timestamp": "2026-08-23T00:02:00Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": TURN_ACTIVE}},
@@ -90,6 +113,12 @@ def write_fixture(root: Path) -> tuple[Path, Path, Path]:
 
 
 class PassReceiptTests(unittest.TestCase):
+    def test_possible_failure_requires_error_at_start_of_projected_output(self) -> None:
+        self.assertTrue(possible_failed_output("Script completed\nOutput:\nError: missing module"))
+        self.assertFalse(possible_failed_output("Script completed\nOutput:\n# Error context\n\nError: prior test"))
+        self.assertTrue(incomplete_failure_evidence("const r = tools.exec_command({}); text(r.output);", ["exec_command"]))
+        self.assertFalse(incomplete_failure_evidence("const r = tools.exec_command({}); text(JSON.stringify(r));", ["exec_command"]))
+
     def test_current_uses_exact_env_session_and_previous_harness_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _, session_root, episode_root = write_fixture(Path(directory))
@@ -99,8 +128,13 @@ class PassReceiptTests(unittest.TestCase):
         self.assertEqual(session["scope"]["kind"], "ordinary_turns_since_previous_harness")
         self.assertEqual(session["scope"]["selectedTurnIds"], [TURN_TWO])
         self.assertEqual(session["usage"]["total"], 140)
-        self.assertEqual(session["operations"]["calls"], 2)
+        self.assertEqual(session["operations"]["calls"], 3)
         self.assertEqual(session["operations"]["failures"], 1)
+        self.assertEqual(session["operations"]["confirmedFailures"], 1)
+        self.assertEqual(session["operations"]["possibleFailures"], 1)
+        self.assertTrue(session["operations"]["failureEvidenceIncomplete"])
+        self.assertEqual(session["operations"]["incompleteFailureEvidenceCalls"], 1)
+        self.assertEqual(session["turns"][0]["toolCost"]["possibleFailures"], 1)
         self.assertEqual(session["operations"]["largestCategory"], "validation")
         self.assertEqual(session["operations"]["repeatedCommandMarkers"][0]["marker"], "validate.sh")
         self.assertEqual(session["activeTurnId"], TURN_ACTIVE)
@@ -143,6 +177,7 @@ class PassReceiptTests(unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(comparison["receiptKind"], "toolburn.compare/v1")
             self.assertEqual(comparison["delta"]["usage"]["total"], 40)
+            self.assertEqual(comparison["delta"]["toolCost"]["possibleFailures"], 1)
             self.assertIn("does not rate", comparison["interpretation"])
 
     def test_current_fails_closed_without_session_identity(self) -> None:

@@ -80,7 +80,7 @@ toolburn pass <session-id> --turn <turn-id>
 toolburn compare <baseline-session> <candidate-session>
 ```
 
-`pass current` resolves `$CODEX_THREAD_ID` and emits a versioned, content-free JSON receipt for completed ordinary turns since the previous recorded Harness turn when DarkExec episode evidence is available. `pass previous` isolates the immediately preceding completed turn for an Efficiency pass. Pass receipts include usage, failures, compactions, tool categories, repeated command and call fingerprints, compact operation runs, and the largest output producers without prompts, messages, raw arguments, or raw output.
+`pass current` resolves `$CODEX_THREAD_ID` and emits a versioned, content-free JSON receipt for completed ordinary turns since the previous recorded Harness turn when DarkExec episode evidence is available. `pass previous` isolates the immediately preceding completed turn for an Efficiency pass. Pass receipts separate confirmed failures from possible error-shaped output and explicitly report when orchestration retained command output but discarded its exit status. They also include usage, compactions, tool categories, repeated command and call fingerprints, compact operation runs, and the largest output producers without prompts, messages, raw arguments, or raw output.
 
 `compare` reports factual candidate-minus-baseline deltas. It does not rate the work or claim that a Harness intervention caused the difference.
 
