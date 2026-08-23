@@ -15,6 +15,9 @@
 - Reports are compact enough to hand to an agent without flooding context.
 - Tool reports must distinguish nearby transcript context from proven tool-caused model calls.
 - Token events without a nearby invocation must name the actor as `no-tool-context:<actor>`, not collapse into `unknown.tool`.
+- Pass selection must use `$CODEX_THREAD_ID`, an exact session UUID, an exact JSONL path, or an exact turn; it must never guess the newest session.
+- Pass receipts omit prompts, messages, raw arguments, and raw output while retaining enough operation structure to locate repeated cost.
+- Comparisons emit factual deltas and never score quality or claim causality.
 
 ## Phase 1 Acceptance
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,14 @@ from pathlib import Path
 from tempfile import gettempdir
 
 from toolburn import __version__
+from toolburn.pass_receipt import (
+    DEFAULT_EPISODE_ROOT,
+    DEFAULT_SESSION_ROOT,
+    PassReceiptError,
+    build_pass_receipt,
+    compare_receipts,
+    format_pass_markdown,
+)
 from toolburn.report import export_json, format_explain, format_table, du_report, explain_report, top_report
 from toolburn.scan import SourceSpec, scan_sources
 from toolburn.schema import initialize_database, table_names
@@ -118,6 +127,34 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser = subparsers.add_parser("export", help="export compact JSON for an agent")
     export_parser.add_argument("--db", required=True, type=Path, help="SQLite DB path")
     export_parser.add_argument("--target", help="optional actor_id or session_id")
+
+    pass_parser = subparsers.add_parser(
+        "pass", help="emit a compact content-free receipt for a Harness or Efficiency pass"
+    )
+    pass_parser.add_argument(
+        "target",
+        nargs="?",
+        default="current",
+        help="current, previous, an exact Codex session UUID, or an exact rollout JSONL path",
+    )
+    pass_parser.add_argument("--turn", help="select one exact completed turn ID")
+    pass_parser.add_argument("--session-root", type=Path, default=DEFAULT_SESSION_ROOT)
+    pass_parser.add_argument("--episodes-root", type=Path, default=DEFAULT_EPISODE_ROOT)
+    pass_parser.add_argument("--no-enrichment", action="store_true")
+    pass_parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    pass_parser.add_argument("--pretty", action="store_true", help="pretty-print JSON")
+
+    compare_parser = subparsers.add_parser(
+        "compare", help="compare two pass receipts without rating or causal claims"
+    )
+    compare_parser.add_argument("baseline", help="baseline session UUID or rollout JSONL path")
+    compare_parser.add_argument("candidate", help="candidate session UUID or rollout JSONL path")
+    compare_parser.add_argument("--baseline-turn", help="exact completed baseline turn ID")
+    compare_parser.add_argument("--candidate-turn", help="exact completed candidate turn ID")
+    compare_parser.add_argument("--session-root", type=Path, default=DEFAULT_SESSION_ROOT)
+    compare_parser.add_argument("--episodes-root", type=Path, default=DEFAULT_EPISODE_ROOT)
+    compare_parser.add_argument("--no-enrichment", action="store_true")
+    compare_parser.add_argument("--pretty", action="store_true", help="pretty-print JSON")
 
     return parser
 
@@ -244,6 +281,47 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "export":
         print(export_json(args.db, args.target))
+        return 0
+
+    if args.command == "pass":
+        try:
+            receipt = build_pass_receipt(
+                args.target,
+                exact_turn=args.turn,
+                session_root=args.session_root,
+                episode_root=args.episodes_root,
+                include_enrichment=not args.no_enrichment,
+            )
+        except PassReceiptError as exc:
+            print(f"toolburn pass failed: {exc}")
+            return 2
+        if args.format == "markdown":
+            print(format_pass_markdown(receipt))
+        else:
+            print(json.dumps(receipt, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
+        return 0
+
+    if args.command == "compare":
+        try:
+            baseline = build_pass_receipt(
+                args.baseline,
+                exact_turn=args.baseline_turn,
+                session_root=args.session_root,
+                episode_root=args.episodes_root,
+                include_enrichment=not args.no_enrichment,
+            )
+            candidate = build_pass_receipt(
+                args.candidate,
+                exact_turn=args.candidate_turn,
+                session_root=args.session_root,
+                episode_root=args.episodes_root,
+                include_enrichment=not args.no_enrichment,
+            )
+        except PassReceiptError as exc:
+            print(f"toolburn compare failed: {exc}")
+            return 2
+        comparison = compare_receipts(baseline, candidate)
+        print(json.dumps(comparison, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0
 
     parser.print_help()
