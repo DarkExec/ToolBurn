@@ -72,7 +72,7 @@ The schema starts with actors, sessions, tools, invocations, token events, and
 burn paths. Adapters and policy files arrive after the offline profiler can
 prove value against real traces.
 
-Pass receipts use the exact Codex session identity rather than guessing the newest file. The shared parser owns completed-turn boundaries, usage deltas, tool-cost categories, repetition signatures, failure-evidence confidence, and privacy-safe output. A structured nonzero exit or explicit tool failure is confirmed; error-shaped text is only possible, and output-only orchestration is labeled incomplete because it discarded exit status. Optional DarkExec episode evidence may identify the preceding Harness boundary; its absence never prevents a generic receipt. Toolburn reports measurements only. Harness Ops owns pass method and Harness Gym owns comparison judgment.
+Pass receipts use the exact Codex session identity rather than guessing the newest file. The shared parser owns completed-turn boundaries, usage deltas, tool-cost categories, repetition signatures, failure-evidence confidence, and privacy-safe output. A structured nonzero exit or explicit tool failure is confirmed; error-shaped text is only possible, and output-only orchestration is labeled incomplete because it discarded exit status. Receipts expose factual failure, repetition, and largest-output hotspots; `toolburn inspect` resolves one exact hotspot into bounded, redacted, local-private evidence without persisting it. Optional DarkExec episode evidence may identify the preceding Harness boundary; its absence never prevents a generic receipt. Toolburn reports measurements only. Harness Ops owns pass method and Harness Gym owns comparison judgment.
 
 ## Attribution Rule
 

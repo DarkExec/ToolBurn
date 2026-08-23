@@ -68,6 +68,8 @@ grep -q 'Local-first token burn profiler' /tmp/toolburn-cli-help.txt
 grep -q 'lookback window' /tmp/toolburn-recent-help.txt
 ./toolburn pass --help >/tmp/toolburn-pass-help.txt
 grep -q 'current, previous' /tmp/toolburn-pass-help.txt
+./toolburn inspect --help >/tmp/toolburn-inspect-help.txt
+grep -q 'exact hotspot ID' /tmp/toolburn-inspect-help.txt
 ./toolburn compare --help >/tmp/toolburn-compare-help.txt
 grep -q 'baseline session UUID' /tmp/toolburn-compare-help.txt
 tmp_bin="$(mktemp -d /tmp/toolburn-bin-XXXXXX)"

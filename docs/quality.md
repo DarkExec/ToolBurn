@@ -17,6 +17,7 @@
 - Token events without a nearby invocation must name the actor as `no-tool-context:<actor>`, not collapse into `unknown.tool`.
 - Pass selection must use `$CODEX_THREAD_ID`, an exact session UUID, an exact JSONL path, or an exact turn; it must never guess the newest session.
 - Pass receipts omit prompts, messages, raw arguments, and raw output while retaining enough operation structure to locate repeated cost.
+- Hotspot inspection is bounded, redacted, local-private, explicitly unsafe to publish, and never persisted by Toolburn.
 - Pass receipts distinguish confirmed failures, possible error-shaped output, and incomplete exit-status evidence; they never turn an output-text heuristic into a confirmed failure.
 - Comparisons emit factual deltas and never score quality or claim causality.
 
