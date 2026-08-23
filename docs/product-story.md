@@ -1,8 +1,8 @@
 # Product Story
 
-CodePager needs small, reliable modules before it becomes a broad control
-plane. Toolburn is the first module because runaway token burn is both expensive
-and operationally dangerous.
+Agent execution needs small, reliable measurement tools before it needs a broad
+control plane. Toolburn starts with token burn because runaway agent work is
+both expensive and operationally dangerous.
 
 The product moment is simple:
 
@@ -25,7 +25,6 @@ report should be enough to decide what to fix.
 
 ## First Customer
 
-The first customer is a human or agent investigating a local CodePager/OpenClaw
-incident and trying to safely remove unnecessary model supervision from a
-recurring background flow.
-
+The first customer is a human or agent investigating local coding-agent or
+OpenClaw execution and trying to safely remove unnecessary model supervision
+from a recurring flow.

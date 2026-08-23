@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-repo_url="${TOOLBURN_REPO_URL:-https://github.com/CodePager/ToolBurn.git}"
+repo_url="${TOOLBURN_REPO_URL:-https://github.com/DarkExec/ToolBurn.git}"
 ref="${TOOLBURN_REF:-main}"
 
 if [ "$(id -u)" = "0" ]; then

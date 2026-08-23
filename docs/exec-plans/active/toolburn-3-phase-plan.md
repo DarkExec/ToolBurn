@@ -1,5 +1,7 @@
 Excellent. **ToolBurn.com** gives the project a real center of gravity.
 
+> Ownership note: this plan began while ToolBurn was a CodePager module. The canonical repository is now `DarkExec/ToolBurn`; remaining CodePager names below describe historical evidence or possible integration targets, not repository ownership.
+
 Here is the 3-phase plan I’d use.
 
 # Phase 1 — Offline profiler: “`ncdu` for token burn”

@@ -4,14 +4,14 @@ AGENTS.md is the map for this repo, not the manual. Keep durable execution
 truth in docs, tests, scripts, and source files that agents can inspect.
 
 ## Start Here
-- Architecture: [ARCHITECTURE.md](/srv/pager/repos/toolburn/ARCHITECTURE.md)
-- Product story: [docs/product-story.md](/srv/pager/repos/toolburn/docs/product-story.md)
-- Runbook: [docs/runbook.md](/srv/pager/repos/toolburn/docs/runbook.md)
-- Quality gates: [docs/quality.md](/srv/pager/repos/toolburn/docs/quality.md)
-- Adapter contract: [docs/adapter-contract.md](/srv/pager/repos/toolburn/docs/adapter-contract.md)
-- Active plans: [docs/exec-plans/active](/srv/pager/repos/toolburn/docs/exec-plans/active)
-- Completed plans: [docs/exec-plans/completed](/srv/pager/repos/toolburn/docs/exec-plans/completed)
-- Harness doctrine: [/srv/harness-engineering.md](/srv/harness-engineering.md)
+- Architecture: [ARCHITECTURE.md](/srv/dark/repos/toolburn/ARCHITECTURE.md)
+- Product story: [docs/product-story.md](/srv/dark/repos/toolburn/docs/product-story.md)
+- Runbook: [docs/runbook.md](/srv/dark/repos/toolburn/docs/runbook.md)
+- Quality gates: [docs/quality.md](/srv/dark/repos/toolburn/docs/quality.md)
+- Adapter contract: [docs/adapter-contract.md](/srv/dark/repos/toolburn/docs/adapter-contract.md)
+- Active plans: [docs/exec-plans/active](/srv/dark/repos/toolburn/docs/exec-plans/active)
+- Completed plans: [docs/exec-plans/completed](/srv/dark/repos/toolburn/docs/exec-plans/completed)
+- Harness doctrine: [/srv/harness-ops.md](/srv/harness-ops.md)
 
 ## Working Rules
 - Humans steer. Agents execute.
