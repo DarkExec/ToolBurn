@@ -142,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     pass_parser.add_argument("--session-root", type=Path, default=DEFAULT_SESSION_ROOT)
     pass_parser.add_argument("--episodes-root", type=Path, default=DEFAULT_EPISODE_ROOT)
     pass_parser.add_argument("--no-enrichment", action="store_true")
-    pass_parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    pass_parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     pass_parser.add_argument("--pretty", action="store_true", help="pretty-print JSON")
 
     inspect_parser = subparsers.add_parser(

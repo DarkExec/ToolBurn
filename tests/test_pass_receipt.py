@@ -192,7 +192,7 @@ class PassReceiptTests(unittest.TestCase):
         self.assertEqual(exact["session"]["scope"]["selectedTurnIds"], [TURN_ONE])
         self.assertEqual(exact["session"]["usage"]["total"], 100)
 
-    def test_cli_pass_and_compare_emit_versioned_json(self) -> None:
+    def test_cli_pass_defaults_to_compact_markdown_and_preserves_full_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             _, session_root, episode_root = write_fixture(Path(directory))
             output = io.StringIO()
@@ -202,6 +202,22 @@ class PassReceiptTests(unittest.TestCase):
                     "--turn", TURN_TWO,
                     "--session-root", str(session_root),
                     "--episodes-root", str(episode_root),
+                ])
+            self.assertEqual(status, 0)
+            compact_receipt = output.getvalue()
+            self.assertIn("# Toolburn Pass Receipt", compact_receipt)
+            self.assertIn("Evidence hotspots:", compact_receipt)
+            self.assertIn("toolburn inspect", compact_receipt)
+            self.assertNotIn('"sequenceRuns"', compact_receipt)
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = main([
+                    "pass", SESSION_ID,
+                    "--turn", TURN_TWO,
+                    "--session-root", str(session_root),
+                    "--episodes-root", str(episode_root),
+                    "--format", "json",
                 ])
             self.assertEqual(status, 0)
             pass_receipt = json.loads(output.getvalue())
