@@ -7,10 +7,10 @@ Toolburn is a local-first CLI for answering:
 > Where did token usage go, and what exact actors, tools, payloads, and
 > recurrence patterns caused it?
 
-It is being built as the first tightly scoped CodePager module. The first
-module boundary is intentionally narrow: read evidence that already exists on
-disk, normalize it into a local SQLite store, and emit compact reports that an
-agent can act on.
+DarkExec owns Toolburn as a project-neutral execution-cost profiler. Its first
+boundary is intentionally narrow: read evidence that already exists on disk,
+normalize it into a local SQLite store, and emit compact reports that a human,
+agent, Harness pass, or evaluation system can act on.
 
 ## Shape
 
