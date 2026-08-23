@@ -424,8 +424,8 @@ if ($status !== 0 || trim($contentHtml) === '') {
       <div class="install" id="install">
         <div class="command-box">
           <span class="prompt" aria-hidden="true">$</span>
-          <code>curl -fsSL https://raw.githubusercontent.com/CodePager/ToolBurn/main/install.sh | sh</code>
-          <button class="copy-button" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/CodePager/ToolBurn/main/install.sh | sh">Copy</button>
+          <code>curl -fsSL https://raw.githubusercontent.com/DarkExec/ToolBurn/main/install.sh | sh</code>
+          <button class="copy-button" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/DarkExec/ToolBurn/main/install.sh | sh">Copy</button>
         </div>
         <a href="#commands-humans-actually-use">View commands</a>
       </div>
@@ -450,7 +450,7 @@ if ($status !== 0 || trim($contentHtml) === '') {
     </main>
 
     <footer class="footer">
-      <span>Toolburn is part of CodePager. This page is rendered from README.md in CodePager/ToolBurn.</span>
+      <span>Toolburn is a DarkExec project. This page is rendered from README.md in DarkExec/ToolBurn.</span>
     </footer>
     <script>
       (() => {

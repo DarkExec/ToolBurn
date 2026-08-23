@@ -84,4 +84,11 @@ if grep -RInE 'cp_live_[A-Za-z0-9]+|assistant\.env|telegram|session-key|webhook|
   exit 1
 fi
 
+if grep -RInE 'CodePager/ToolBurn|/srv/pager/(repos/toolburn|sites/toolburn\.com)' \
+  AGENTS.md ARCHITECTURE.md README.md docs scripts site src tests pyproject.toml \
+  | grep -v '^scripts/validate.sh:'; then
+  echo "stale ToolBurn ownership reference found" >&2
+  exit 1
+fi
+
 echo "toolburn validation ok"

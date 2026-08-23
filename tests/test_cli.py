@@ -122,7 +122,7 @@ def copilot_fixture_rows() -> list[dict]:
                 "producer": "copilot-agent",
                 "copilotVersion": "1.0.31",
                 "startTime": "2026-06-01T22:54:15.000Z",
-                "context": {"cwd": "/srv/pager/repos/toolburn"},
+                "context": {"cwd": "/srv/dark/repos/toolburn"},
             },
             "id": "start-1",
             "timestamp": "2026-06-01T22:54:15.000Z",
@@ -322,7 +322,7 @@ def cached_validate_attribution_rows() -> list[dict]:
             "payload": {
                 "id": "cached-validate-session",
                 "timestamp": "2026-06-01T22:54:15.000Z",
-                "cwd": "/srv/pager/repos/toolburn",
+                "cwd": "/srv/dark/repos/toolburn",
                 "originator": "codex",
             },
         },
