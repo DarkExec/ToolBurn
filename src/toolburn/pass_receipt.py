@@ -26,6 +26,15 @@ FAILURE_PATTERNS = (
     re.compile(r"^broken link in ", re.MULTILINE),
     re.compile(r"^jq: (?:compile )?error", re.MULTILINE),
 )
+POSSIBLE_FAILURE_PATTERNS = (
+    re.compile(r"^Error(?:\[[^\]]+\])?:\s", re.MULTILINE),
+    re.compile(r"^Traceback \(most recent call last\):", re.MULTILINE),
+    re.compile(r"^fatal:\s", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"(?:^|\s)(?:command not found|MODULE_NOT_FOUND)(?:\s|$)", re.MULTILINE),
+)
+OUTPUT_ONLY_PROJECTION_RE = re.compile(
+    r"\btext\s*\(\s*(?:JSON\.stringify\s*\(\s*)?[A-Za-z_$][A-Za-z0-9_$]*\.output\b"
+)
 USAGE_KEYS = (
     "rawInput",
     "cachedInput",
@@ -207,6 +216,19 @@ def failed_output(text: str) -> bool:
     return any(pattern.search(text) for pattern in FAILURE_PATTERNS)
 
 
+def possible_failed_output(text: str) -> bool:
+    marker = "\nOutput:\n"
+    body = text.split(marker, 1)[1] if marker in text else text
+    body = body.lstrip()
+    first_line = body.splitlines()[0] if body else ""
+    return any(pattern.search(first_line) for pattern in POSSIBLE_FAILURE_PATTERNS)
+
+
+def incomplete_failure_evidence(raw: str, embedded: list[str]) -> bool:
+    """Return true when orchestration projects command output but discards its exit status."""
+    return "exec_command" in embedded and bool(OUTPUT_ONLY_PROJECTION_RE.search(raw))
+
+
 def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
     meta: dict[str, Any] = {}
     turns: list[dict[str, Any]] = []
@@ -296,6 +318,9 @@ def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
                         "fingerprint": hashlib.sha256(raw.encode()).hexdigest()[:12],
                         "outputBytes": 0,
                         "failed": False,
+                        "confirmedFailure": False,
+                        "possibleFailure": False,
+                        "failureEvidenceIncomplete": incomplete_failure_evidence(raw, embedded),
                     }
                     active["operations"].append(operation)
                     pending[call_id] = operation
@@ -306,7 +331,13 @@ def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
                         continue
                     text = output_text(payload)
                     operation["outputBytes"] = len(text.encode())
-                    operation["failed"] = failed_output(text)
+                    operation["confirmedFailure"] = failed_output(text)
+                    operation["failed"] = operation["confirmedFailure"]
+                    operation["possibleFailure"] = (
+                        not operation["confirmedFailure"]
+                        and operation["failureEvidenceIncomplete"]
+                        and possible_failed_output(text)
+                    )
 
     session_id = str(meta.get("session_id") or meta.get("id") or "")
     if not session_id:
@@ -363,7 +394,9 @@ def operation_summary(operations: list[dict[str, Any]]) -> dict[str, Any]:
     signatures: list[dict[str, Any]] = []
     signature_ids: dict[tuple[str, tuple[str, ...], str], int] = {}
     runs: list[list[int]] = []
-    failures = 0
+    confirmed_failures = 0
+    possible_failures = 0
+    incomplete_evidence_calls = 0
     output_bytes = 0
 
     for operation in operations:
@@ -373,13 +406,27 @@ def operation_summary(operations: list[dict[str, Any]]) -> dict[str, Any]:
         sequence = int(operation.get("sequence") or 0)
         by_tool[tool] += 1
         by_embedded.update(embedded)
-        category_cost = by_category.setdefault(category, {"calls": 0, "outputBytes": 0, "failures": 0})
+        category_cost = by_category.setdefault(category, {
+            "calls": 0,
+            "outputBytes": 0,
+            "failures": 0,
+            "confirmedFailures": 0,
+            "possibleFailures": 0,
+            "incompleteFailureEvidenceCalls": 0,
+        })
         category_cost["calls"] += 1
         category_cost["outputBytes"] += int(operation.get("outputBytes") or 0)
         output_bytes += int(operation.get("outputBytes") or 0)
-        if operation.get("failed"):
-            failures += 1
+        if operation.get("confirmedFailure", operation.get("failed")):
+            confirmed_failures += 1
             category_cost["failures"] += 1
+            category_cost["confirmedFailures"] += 1
+        if operation.get("possibleFailure"):
+            possible_failures += 1
+            category_cost["possibleFailures"] += 1
+        if operation.get("failureEvidenceIncomplete"):
+            incomplete_evidence_calls += 1
+            category_cost["incompleteFailureEvidenceCalls"] += 1
         for marker in operation.get("commandMarkers") or []:
             group = markers.setdefault(str(marker), {"marker": marker, "count": 0, "outputBytes": 0})
             group["count"] += 1
@@ -410,7 +457,11 @@ def operation_summary(operations: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "calls": len(operations),
         "outputBytes": output_bytes,
-        "failures": failures,
+        "failures": confirmed_failures,
+        "confirmedFailures": confirmed_failures,
+        "possibleFailures": possible_failures,
+        "failureEvidenceIncomplete": incomplete_evidence_calls > 0,
+        "incompleteFailureEvidenceCalls": incomplete_evidence_calls,
         "byTool": dict(sorted(by_tool.items())),
         "byEmbeddedTool": dict(sorted(by_embedded.items())),
         "byCategory": dict(sorted(by_category.items())),
@@ -433,6 +484,9 @@ def operation_summary(operations: list[dict[str, Any]]) -> dict[str, Any]:
                 "category": operation.get("category"),
                 "outputBytes": operation.get("outputBytes"),
                 "failed": bool(operation.get("failed")),
+                "confirmedFailure": bool(operation.get("confirmedFailure", operation.get("failed"))),
+                "possibleFailure": bool(operation.get("possibleFailure")),
+                "failureEvidenceIncomplete": bool(operation.get("failureEvidenceIncomplete")),
             }
             for operation in sorted(operations, key=lambda item: -int(item.get("outputBytes") or 0))[:5]
         ],
@@ -491,7 +545,10 @@ def compact_turn(turn: dict[str, Any]) -> dict[str, Any]:
         "usage": turn["usage"],
         "toolCost": {
             key: operations[key]
-            for key in ("calls", "outputBytes", "failures", "largestCategory", "byCategory")
+            for key in (
+                "calls", "outputBytes", "failures", "confirmedFailures", "possibleFailures",
+                "failureEvidenceIncomplete", "incompleteFailureEvidenceCalls", "largestCategory", "byCategory",
+            )
         },
         "compactions": int(turn.get("compactions") or 0),
     }
@@ -556,7 +613,10 @@ def metric_view(receipt: dict[str, Any]) -> dict[str, Any]:
         "usage": session["usage"],
         "toolCost": {
             key: operations[key]
-            for key in ("calls", "outputBytes", "failures", "largestCategory", "byCategory")
+            for key in (
+                "calls", "outputBytes", "failures", "confirmedFailures", "possibleFailures",
+                "incompleteFailureEvidenceCalls", "largestCategory", "byCategory",
+            )
         },
         "compactions": session["compactions"],
     }
@@ -602,11 +662,16 @@ def format_pass_markdown(receipt: dict[str, Any]) -> str:
         f"- Session: `{session['sessionId']}`",
         f"- Scope: `{session['scope']['kind']}`; turns: `{len(session['scope']['selectedTurnIds'])}`",
         f"- Tokens: `{usage['total']}` total; `{usage['uncachedInput']}` uncached input; `{usage['output']}` output",
-        f"- Tools: `{operations['calls']}` calls; `{operations['outputBytes']}` output bytes; `{operations['failures']}` failed outcomes",
+        f"- Tools: `{operations['calls']}` calls; `{operations['outputBytes']}` output bytes; "
+        f"`{operations['confirmedFailures']}` confirmed failures; `{operations['possibleFailures']}` possible failures",
         f"- Largest category: `{operations['largestCategory'] or 'none'}`; compactions: `{session['compactions']}`",
     ]
     repeated = operations["repeatedCommandMarkers"]
     if repeated:
         lines.append("- Repeated commands: " + ", ".join(f"`{item['marker']}` x{item['count']}" for item in repeated[:5]))
+    if operations["failureEvidenceIncomplete"]:
+        lines.append(
+            f"- Failure evidence: incomplete for `{operations['incompleteFailureEvidenceCalls']}` calls whose orchestration retained output but discarded exit status"
+        )
     lines.extend(["", "Content-free receipt: prompts, messages, arguments, and raw output are omitted."])
     return "\n".join(lines)
