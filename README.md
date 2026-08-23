@@ -2,6 +2,8 @@
 
 Toolburn is a local token burn profiler for coding agents.
 
+The public documentation is rendered from this README at [toolburn.com](https://toolburn.com/).
+
 Think of it as `ncdu` for token usage: it scans the session evidence already on
 your machine, groups spend by actor, tool, session, and source, then points at
 the burn paths worth fixing.

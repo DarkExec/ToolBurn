@@ -11,6 +11,7 @@ truth in docs, tests, scripts, and source files that agents can inspect.
 - Adapter contract: [docs/adapter-contract.md](/srv/dark/repos/toolburn/docs/adapter-contract.md)
 - Active plans: [docs/exec-plans/active](/srv/dark/repos/toolburn/docs/exec-plans/active)
 - Completed plans: [docs/exec-plans/completed](/srv/dark/repos/toolburn/docs/exec-plans/completed)
+- Public documentation site: [site/AGENTS.md](/srv/dark/repos/toolburn/site/AGENTS.md)
 - Harness doctrine: [/srv/harness-ops.md](/srv/harness-ops.md)
 
 ## Working Rules
