@@ -44,6 +44,17 @@ USAGE_KEYS = (
     "reasoningOutput",
     "total",
 )
+HOTSPOT_PREFIX = "tb1-"
+HOTSPOT_MEMBER_LIMIT = 8
+INSPECT_OPERATION_LIMIT = 12
+INSPECT_EXCERPT_LIMIT = 1200
+SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/-]+=*"),
+    re.compile(
+        r"(?i)(\b(?:authorization|cookie|set-cookie|api[_-]?key|access[_-]?token|password|secret)\b\s*[:=]\s*)([^\s,;]+)"
+    ),
+    re.compile(r"\b(?:github" + r"_pat_|gh[pousr]_|sk-)[A-Za-z0-9_-]{8,}"),
+)
 
 
 class PassReceiptError(RuntimeError):
@@ -311,6 +322,7 @@ def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
                     markers = command_markers(raw)
                     operation = {
                         "sequence": len(active["operations"]) + 1,
+                        "turnId": active["turnId"],
                         "tool": name,
                         "embeddedTools": embedded,
                         "commandMarkers": markers,
@@ -321,6 +333,8 @@ def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
                         "confirmedFailure": False,
                         "possibleFailure": False,
                         "failureEvidenceIncomplete": incomplete_failure_evidence(raw, embedded),
+                        "rawInput": raw,
+                        "rawOutput": "",
                     }
                     active["operations"].append(operation)
                     pending[call_id] = operation
@@ -330,6 +344,7 @@ def parse_rollouts(paths: Iterable[Path]) -> dict[str, Any]:
                     if operation is None:
                         continue
                     text = output_text(payload)
+                    operation["rawOutput"] = text
                     operation["outputBytes"] = len(text.encode())
                     operation["confirmedFailure"] = failed_output(text)
                     operation["failed"] = operation["confirmedFailure"]
@@ -493,6 +508,208 @@ def operation_summary(operations: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def hotspot_reference(session_id: str, kind: str, members: list[dict[str, Any]]) -> str:
+    member_refs = [
+        [str(item.get("turnId") or ""), int(item.get("turnSequence") or 0), str(item.get("fingerprint") or "")]
+        for item in members[:HOTSPOT_MEMBER_LIMIT]
+    ]
+    digest = hashlib.sha256(
+        json.dumps([session_id, kind, member_refs], separators=(",", ":")).encode()
+    ).hexdigest()[:12]
+    return f"{HOTSPOT_PREFIX}{kind}-{digest}"
+
+
+def build_hotspots(
+    session_id: str,
+    operations: list[dict[str, Any]],
+    *,
+    include_members: bool = False,
+) -> list[dict[str, Any]]:
+    """Return a small factual index; interpretation remains with the Harness pass."""
+    if not session_id or not operations:
+        return []
+    hotspots: list[dict[str, Any]] = []
+    turn_ids = list(dict.fromkeys(str(item.get("turnId") or "") for item in operations))
+
+    def inspection_command(reference: str) -> str:
+        turns = " ".join(f"--turn '{turn_id}'" for turn_id in turn_ids)
+        return f"toolburn inspect '{reference}' --session '{session_id}' {turns}"
+
+    def finish(hotspot: dict[str, Any], members: list[dict[str, Any]]) -> dict[str, Any]:
+        hotspot["inspectCommand"] = inspection_command(str(hotspot["id"]))
+        if include_members:
+            hotspot["_members"] = members[:HOTSPOT_MEMBER_LIMIT]
+        return hotspot
+
+    failures = [
+        item for item in operations
+        if item.get("confirmedFailure") or item.get("possibleFailure")
+    ]
+    if failures:
+        reference = hotspot_reference(session_id, "failures", failures)
+        hotspots.append(finish({
+            "kind": "failures",
+            "id": reference,
+            "operationCount": len(failures),
+            "confirmedFailures": sum(bool(item.get("confirmedFailure")) for item in failures),
+            "possibleFailures": sum(bool(item.get("possibleFailure")) for item in failures),
+            "inspectOperationCount": min(len(failures), HOTSPOT_MEMBER_LIMIT),
+        }, failures))
+
+    repeated: dict[str, list[dict[str, Any]]] = {}
+    for operation in operations:
+        repeated.setdefault(str(operation.get("fingerprint") or ""), []).append(operation)
+    marker_groups: dict[str, list[dict[str, Any]]] = {}
+    for operation in operations:
+        for marker in operation.get("commandMarkers") or []:
+            marker_groups.setdefault(str(marker), []).append(operation)
+    repeated_groups = [
+        ("fingerprint", fingerprint, items)
+        for fingerprint, items in repeated.items()
+        if len(items) > 1
+    ] + [
+        ("commandMarker", marker, items)
+        for marker, items in marker_groups.items()
+        if len(items) > 1
+    ]
+    if repeated_groups:
+        basis, value, members = max(
+            repeated_groups,
+            key=lambda group: (
+                len(group[2]),
+                sum(int(item.get("outputBytes") or 0) for item in group[2]),
+                group[0] == "fingerprint",
+                group[1],
+            ),
+        )
+        reference = hotspot_reference(session_id, "repeated-operation", members)
+        hotspots.append(finish({
+            "kind": "repeated-operation",
+            "id": reference,
+            "operationCount": len(members),
+            "basis": basis,
+            "value": value,
+            "inspectOperationCount": min(len(members), HOTSPOT_MEMBER_LIMIT),
+        }, members))
+
+    largest = max(
+        operations,
+        key=lambda item: (int(item.get("outputBytes") or 0), -int(item.get("sequence") or 0)),
+    )
+    if int(largest.get("outputBytes") or 0) > 0:
+        reference = hotspot_reference(session_id, "largest-output", [largest])
+        hotspots.append(finish({
+            "kind": "largest-output",
+            "id": reference,
+            "operationCount": 1,
+            "outputBytes": int(largest.get("outputBytes") or 0),
+            "inspectOperationCount": 1,
+        }, [largest]))
+    return hotspots
+
+
+def redact_private_excerpt(value: str) -> str:
+    result = value
+    for pattern in SECRET_PATTERNS:
+        if pattern.groups == 1:
+            result = pattern.sub(r"\1 [REDACTED]", result)
+        elif pattern.groups == 2:
+            result = pattern.sub(r"\1[REDACTED]", result)
+        else:
+            result = pattern.sub("[REDACTED]", result)
+    return result
+
+
+def bounded_private_excerpt(value: str) -> str:
+    value = redact_private_excerpt(value)
+    if len(value) <= INSPECT_EXCERPT_LIMIT:
+        return value
+    head = 800
+    tail = 300
+    omitted = len(value) - head - tail
+    return f"{value[:head]}\n... [{omitted} characters omitted] ...\n{value[-tail:]}"
+
+
+def inspect_hotspot(
+    reference: str,
+    *,
+    session_id: str,
+    turn_ids: list[str],
+    session_root: Path = DEFAULT_SESSION_ROOT,
+) -> dict[str, Any]:
+    if not reference.startswith(HOTSPOT_PREFIX) or not SESSION_ID_RE.fullmatch(session_id) or not turn_ids:
+        raise PassReceiptError("hotspot ID or exact scope is invalid")
+    _, paths = resolve_selector(session_id, session_root)
+    parsed = parse_rollouts(paths)
+    turns = {str(turn.get("turnId") or ""): turn for turn in parsed["completedTurns"]}
+    selected = []
+    for turn_id in turn_ids:
+        turn = turns.get(turn_id)
+        if turn is None:
+            raise PassReceiptError("hotspot evidence is no longer available")
+        selected.append(turn)
+    flattened: list[dict[str, Any]] = []
+    for turn in selected:
+        offset = len(flattened)
+        for operation in turn["operations"]:
+            flattened.append({
+                **operation,
+                "turnSequence": int(operation["sequence"]),
+                "sequence": offset + int(operation["sequence"]),
+            })
+    hotspot = next(
+        (item for item in build_hotspots(session_id, flattened, include_members=True) if item["id"] == reference),
+        None,
+    )
+    if hotspot is None:
+        raise PassReceiptError("hotspot evidence changed")
+    members = list(hotspot["_members"])
+    member_keys: set[tuple[str, int]] = set()
+    ordered_member_keys: list[tuple[str, int]] = []
+    for operation in members:
+        key = (str(operation["turnId"]), int(operation["turnSequence"]))
+        member_keys.add(key)
+        ordered_member_keys.append(key)
+
+    selected_keys = list(ordered_member_keys)
+    for operation in members:
+        turn_id = str(operation["turnId"])
+        turn = turns[turn_id]
+        sequence = int(operation["turnSequence"])
+        for nearby in (sequence - 1, sequence + 1):
+            key = (turn_id, nearby)
+            if 1 <= nearby <= len(turn["operations"]) and key not in member_keys and key not in selected_keys:
+                selected_keys.append(key)
+    selected_keys = ordered_member_keys + [key for key in selected_keys if key not in member_keys]
+    selected_keys = selected_keys[:INSPECT_OPERATION_LIMIT]
+
+    operations = []
+    for turn_id, sequence in selected_keys:
+        operation = turns[turn_id]["operations"][sequence - 1]
+        operations.append({
+            "turnId": turn_id,
+            "sequence": sequence,
+            "relation": "hotspot" if (turn_id, sequence) in member_keys else "context",
+            "tool": operation.get("tool"),
+            "category": operation.get("category"),
+            "confirmedFailure": bool(operation.get("confirmedFailure")),
+            "possibleFailure": bool(operation.get("possibleFailure")),
+            "failureEvidenceIncomplete": bool(operation.get("failureEvidenceIncomplete")),
+            "inputExcerpt": bounded_private_excerpt(str(operation.get("rawInput") or "")),
+            "outputExcerpt": bounded_private_excerpt(str(operation.get("rawOutput") or "")),
+        })
+    return {
+        "schemaVersion": 1,
+        "receiptKind": "toolburn.pass-inspect/v1",
+        "sessionId": session_id,
+        "hotspotKind": hotspot.get("kind"),
+        "privacy": "local_private",
+        "safeToPublish": False,
+        "operationCount": len(operations),
+        "operations": operations,
+    }
+
+
 def select_turns(
     parsed: dict[str, Any],
     selector: str,
@@ -575,7 +792,11 @@ def build_pass_receipt(
         compactions += int(turn.get("compactions") or 0)
         offset = len(operations)
         for operation in turn["operations"]:
-            operations.append({**operation, "sequence": offset + int(operation["sequence"])})
+            operations.append({
+                **operation,
+                "turnSequence": int(operation["sequence"]),
+                "sequence": offset + int(operation["sequence"]),
+            })
     receipt = {
         "schemaVersion": 1,
         "receiptKind": "toolburn.pass/v1",
@@ -594,6 +815,7 @@ def build_pass_receipt(
             "scope": {**scope, "selectedTurnIds": [turn["turnId"] for turn in selected]},
             "usage": usage,
             "operations": operation_summary(operations),
+            "hotspots": build_hotspots(session_id, operations),
             "compactions": compactions,
             "turns": [compact_turn(turn) for turn in selected],
         },
@@ -673,5 +895,13 @@ def format_pass_markdown(receipt: dict[str, Any]) -> str:
         lines.append(
             f"- Failure evidence: incomplete for `{operations['incompleteFailureEvidenceCalls']}` calls whose orchestration retained output but discarded exit status"
         )
+    hotspots = session.get("hotspots") or []
+    if hotspots:
+        lines.extend(["", "Evidence hotspots:"])
+        for hotspot in hotspots:
+            facts = f"{hotspot['operationCount']} operation(s)"
+            if hotspot["kind"] == "largest-output":
+                facts = f"{hotspot['outputBytes']} output bytes"
+            lines.append(f"- `{hotspot['kind']}`: {facts}; `{hotspot['inspectCommand']}`")
     lines.extend(["", "Content-free receipt: prompts, messages, arguments, and raw output are omitted."])
     return "\n".join(lines)

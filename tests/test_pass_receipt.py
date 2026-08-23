@@ -13,6 +13,7 @@ from toolburn.cli import main
 from toolburn.pass_receipt import (
     build_pass_receipt,
     incomplete_failure_evidence,
+    inspect_hotspot,
     possible_failed_output,
 )
 
@@ -61,7 +62,7 @@ def fixture_rows() -> list[dict]:
             "type": "response_item",
             "payload": {"type": "custom_tool_call", "call_id": "two", "name": "exec", "input": 'await tools.exec_command({"cmd":"./scripts/validate.sh"})'},
         },
-        {"timestamp": "2026-08-23T00:01:03Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "two", "output": "passed"}},
+        {"timestamp": "2026-08-23T00:01:03Z", "type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "two", "output": "passed\nAuthorization: Bearer fixture-secret"}},
         {
             "timestamp": "2026-08-23T00:01:04Z",
             "type": "response_item",
@@ -137,8 +138,49 @@ class PassReceiptTests(unittest.TestCase):
         self.assertEqual(session["turns"][0]["toolCost"]["possibleFailures"], 1)
         self.assertEqual(session["operations"]["largestCategory"], "validation")
         self.assertEqual(session["operations"]["repeatedCommandMarkers"][0]["marker"], "validate.sh")
+        self.assertEqual([item["kind"] for item in session["hotspots"]], [
+            "failures", "repeated-operation", "largest-output",
+        ])
         self.assertEqual(session["activeTurnId"], TURN_ACTIVE)
         self.assertIn("darkexec", receipt)
+
+    def test_hotspot_inspection_is_bounded_private_and_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _, session_root, episode_root = write_fixture(Path(directory))
+            receipt = build_pass_receipt(
+                SESSION_ID,
+                exact_turn=TURN_TWO,
+                session_root=session_root,
+                episode_root=episode_root,
+            )
+            repeated = next(
+                item for item in receipt["session"]["hotspots"]
+                if item["kind"] == "repeated-operation"
+            )
+            repeated_again = next(
+                item for item in build_pass_receipt(
+                    SESSION_ID,
+                    exact_turn=TURN_TWO,
+                    session_root=session_root,
+                    episode_root=episode_root,
+                )["session"]["hotspots"]
+                if item["kind"] == "repeated-operation"
+            )
+            inspected = inspect_hotspot(
+                repeated["id"],
+                session_id=SESSION_ID,
+                turn_ids=[TURN_TWO],
+                session_root=session_root,
+            )
+        self.assertEqual(repeated["id"], repeated_again["id"])
+        self.assertNotIn("fixture-secret", json.dumps(receipt))
+        self.assertEqual(inspected["receiptKind"], "toolburn.pass-inspect/v1")
+        self.assertEqual(inspected["privacy"], "local_private")
+        self.assertFalse(inspected["safeToPublish"])
+        self.assertLessEqual(inspected["operationCount"], 12)
+        serialized = json.dumps(inspected)
+        self.assertNotIn("fixture-secret", serialized)
+        self.assertIn("[REDACTED]", serialized)
 
     def test_previous_and_exact_turn_are_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -162,7 +204,20 @@ class PassReceiptTests(unittest.TestCase):
                     "--episodes-root", str(episode_root),
                 ])
             self.assertEqual(status, 0)
-            self.assertEqual(json.loads(output.getvalue())["receiptKind"], "toolburn.pass/v1")
+            pass_receipt = json.loads(output.getvalue())
+            self.assertEqual(pass_receipt["receiptKind"], "toolburn.pass/v1")
+
+            output = io.StringIO()
+            hotspot_id = pass_receipt["session"]["hotspots"][0]["id"]
+            with contextlib.redirect_stdout(output):
+                status = main([
+                    "inspect", hotspot_id,
+                    "--session", SESSION_ID,
+                    "--turn", TURN_TWO,
+                    "--session-root", str(session_root),
+                ])
+            self.assertEqual(status, 0)
+            self.assertEqual(json.loads(output.getvalue())["receiptKind"], "toolburn.pass-inspect/v1")
 
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
@@ -186,6 +241,17 @@ class PassReceiptTests(unittest.TestCase):
             status = main(["pass", "current"])
         self.assertEqual(status, 2)
         self.assertIn("CODEX_THREAD_ID is unavailable", output.getvalue())
+
+    def test_inspect_fails_closed_for_invalid_hotspot_id(self) -> None:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = main([
+                "inspect", "not-a-hotspot",
+                "--session", SESSION_ID,
+                "--turn", TURN_ONE,
+            ])
+        self.assertEqual(status, 2)
+        self.assertIn("hotspot ID or exact scope is invalid", output.getvalue())
 
 
 if __name__ == "__main__":

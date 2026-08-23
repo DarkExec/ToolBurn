@@ -18,6 +18,7 @@ from toolburn.pass_receipt import (
     build_pass_receipt,
     compare_receipts,
     format_pass_markdown,
+    inspect_hotspot,
 )
 from toolburn.report import export_json, format_explain, format_table, du_report, explain_report, top_report
 from toolburn.scan import SourceSpec, scan_sources
@@ -143,6 +144,15 @@ def build_parser() -> argparse.ArgumentParser:
     pass_parser.add_argument("--no-enrichment", action="store_true")
     pass_parser.add_argument("--format", choices=("json", "markdown"), default="json")
     pass_parser.add_argument("--pretty", action="store_true", help="pretty-print JSON")
+
+    inspect_parser = subparsers.add_parser(
+        "inspect", help="inspect one bounded local-private pass hotspot"
+    )
+    inspect_parser.add_argument("hotspot_id", help="exact hotspot ID emitted by toolburn pass")
+    inspect_parser.add_argument("--session", required=True, help="exact session UUID from the pass receipt")
+    inspect_parser.add_argument("--turn", action="append", required=True, help="exact selected turn ID; may be repeated")
+    inspect_parser.add_argument("--session-root", type=Path, default=DEFAULT_SESSION_ROOT)
+    inspect_parser.add_argument("--pretty", action="store_true", help="pretty-print JSON")
 
     compare_parser = subparsers.add_parser(
         "compare", help="compare two pass receipts without rating or causal claims"
@@ -299,6 +309,20 @@ def main(argv: list[str] | None = None) -> int:
             print(format_pass_markdown(receipt))
         else:
             print(json.dumps(receipt, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
+        return 0
+
+    if args.command == "inspect":
+        try:
+            receipt = inspect_hotspot(
+                args.hotspot_id,
+                session_id=args.session,
+                turn_ids=args.turn,
+                session_root=args.session_root,
+            )
+        except PassReceiptError as exc:
+            print(f"toolburn inspect failed: {exc}")
+            return 2
+        print(json.dumps(receipt, indent=2 if args.pretty else None, separators=None if args.pretty else (",", ":")))
         return 0
 
     if args.command == "compare":

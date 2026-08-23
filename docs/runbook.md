@@ -43,6 +43,7 @@ The normal local check is:
 toolburn 24h
 toolburn recent --hours 23 --limit 20
 toolburn pass current --format markdown
+toolburn inspect '<hotspot-id>' --session '<session-id>' --turn '<turn-id>' --pretty
 ```
 
 This scans the default local Codex and OpenClaw session roots, writes a reusable
@@ -61,7 +62,7 @@ toolburn top --db /tmp/toolburn.sqlite --by tool --since 2026-06-02T10:00:00.000
 toolburn explain --db /tmp/toolburn.sqlite <actor-or-session-id> --for-agent
 ```
 
-For a Harness pass in the active Codex session, run `toolburn pass current`. For an Efficiency pass over the immediately preceding Harness turn, run `toolburn pass previous`. Use `--turn` only when an exact completed turn is already known. Use `toolburn compare` for stable factual deltas; leave ratings and causal conclusions to the evaluation owner.
+For a Harness pass in the active Codex session, run `toolburn pass current`. For an Efficiency pass over the immediately preceding Harness turn, run `toolburn pass previous`. Use `--turn` only when an exact completed turn is already known. A pass receipt may point to factual hotspots; inspect only the selected hotspot with its exact `toolburn inspect` command. Inspection is local-private and unsafe to publish. Use `toolburn compare` for stable factual deltas; leave ratings and causal conclusions to the evaluation owner.
 
 ## Evidence Handling
 
