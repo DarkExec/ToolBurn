@@ -36,6 +36,11 @@ require_file tests/test_cli.py
 require_file tests/test_schema.py
 require_file scripts/install-local.sh
 require_file scripts/validate.sh
+require_file site/AGENTS.md
+require_file site/public/index.php
+require_file site/public/render_readme.py
+require_file site/public/assets/toolburn-logo.png
+require_file site/public/assets/toolburn-logo-text.png
 
 if find . \( -path '*/__pycache__' -o -name '*.pyc' -o -name '.pytest_cache' \) -print | grep -q .; then
   echo "generated Python cache files must not be left in the repo" >&2
@@ -45,11 +50,14 @@ fi
 
 python3 - <<'PY'
 from pathlib import Path
-for path in sorted(Path("src").rglob("*.py")) + sorted(Path("tests").rglob("*.py")):
+for path in sorted(Path("src").rglob("*.py")) + sorted(Path("tests").rglob("*.py")) + sorted(Path("site").rglob("*.py")):
     compile(path.read_text(encoding="utf-8"), str(path), "exec")
 print("python syntax ok")
 PY
 sh -n install.sh
+php -l site/public/index.php >/dev/null
+python3 site/public/render_readme.py --readme README.md >/tmp/toolburn-site-render.html
+grep -q '<h1 id="toolburn">Toolburn</h1>' /tmp/toolburn-site-render.html
 
 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 ./toolburn --help >/tmp/toolburn-cli-help.txt
@@ -69,7 +77,7 @@ grep -q '^token_events$' /tmp/toolburn-schema.txt
 rm -f "$tmp_db"
 
 if grep -RInE 'cp_live_[A-Za-z0-9]+|assistant\.env|telegram|session-key|webhook|BEGIN (RSA|OPENSSH|PRIVATE) KEY|github_pat_' \
-  AGENTS.md ARCHITECTURE.md README.md docs scripts src tests pyproject.toml \
+  AGENTS.md ARCHITECTURE.md README.md docs scripts site src tests pyproject.toml \
   | grep -v '^scripts/validate.sh:' >/tmp/toolburn-secretish.txt; then
   echo "secret-shaped or private-runtime strings found:" >&2
   cat /tmp/toolburn-secretish.txt >&2

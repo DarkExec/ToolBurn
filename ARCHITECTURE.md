@@ -28,6 +28,8 @@ docs/
     completed/
 scripts/
   validate.sh
+site/
+  public/
 src/toolburn/
   __init__.py
   cli.py
@@ -53,6 +55,8 @@ Phase 1 excludes:
 - command interception
 - eBPF or kernel-level tracing
 - background watchers
+
+The small `site/` wrapper publishes this repository's README at toolburn.com. It is a distribution surface, not part of the profiler execution path.
 
 ## Core Model
 
