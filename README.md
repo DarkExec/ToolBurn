@@ -77,11 +77,12 @@ toolburn sources
 toolburn pass current
 toolburn pass previous
 toolburn pass <session-id> --turn <turn-id>
+toolburn pass current --format json
 toolburn inspect <hotspot-id> --session <session-id> --turn <turn-id>
 toolburn compare <baseline-session> <candidate-session>
 ```
 
-`pass current` resolves `$CODEX_THREAD_ID` and emits a versioned, content-free JSON receipt for completed ordinary turns since the previous recorded Harness turn when DarkExec episode evidence is available. `pass previous` isolates the immediately preceding completed turn for an Efficiency pass. Pass receipts separate confirmed failures from possible error-shaped output and explicitly report when orchestration retained command output but discarded its exit status. They also include usage, compactions, tool categories, repeated command and call fingerprints, compact operation runs, and factual failure, repetition, and largest-output hotspots without prompts, messages, raw arguments, or raw output.
+`pass current` resolves `$CODEX_THREAD_ID` and emits a compact, content-free Markdown receipt for completed ordinary turns since the previous recorded Harness turn when DarkExec episode evidence is available. `pass previous` isolates the immediately preceding completed turn for an Efficiency pass. Use `--format json` for the complete versioned machine receipt. Pass receipts separate confirmed failures from possible error-shaped output and explicitly report when orchestration retained command output but discarded its exit status. The full JSON also includes usage, compactions, tool categories, repeated command and call fingerprints, compact operation runs, and factual failure, repetition, and largest-output hotspots without prompts, messages, raw arguments, or raw output.
 
 Each hotspot includes an exact `toolburn inspect` command. Inspection prints one bounded, redacted, local-private slice around that hotspot; it is not safe to publish and is never persisted by Toolburn.
 
