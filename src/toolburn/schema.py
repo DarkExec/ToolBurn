@@ -32,7 +32,6 @@ create table if not exists sessions(
 create table if not exists tools(
   tool_id text primary key,
   normalized_command text,
-  operation_context text,
   executable text,
   cwd text,
   fingerprint text,
@@ -49,6 +48,8 @@ create table if not exists invocations(
   output_bytes integer,
   output_fingerprint text,
   output_shape_json text,
+  bundle_json text,
+  bundle_fingerprint text,
   foreign key(session_id) references sessions(session_id),
   foreign key(actor_id) references actors(actor_id),
   foreign key(tool_id) references tools(tool_id)
@@ -71,20 +72,6 @@ create table if not exists token_events(
   foreign key(invocation_id) references invocations(invocation_id)
 );
 
-create table if not exists burn_paths(
-  burn_path_id text primary key,
-  actor_id text,
-  tool_id text,
-  pattern text,
-  cadence_seconds integer,
-  tokens_24h integer,
-  tokens_per_invocation_p95 integer,
-  confidence real,
-  metadata_json text,
-  foreign key(actor_id) references actors(actor_id),
-  foreign key(tool_id) references tools(tool_id)
-);
-
 create table if not exists scan_cache(
   source_path text primary key,
   source_label text,
@@ -103,7 +90,6 @@ REQUIRED_TABLES = (
     "tools",
     "invocations",
     "token_events",
-    "burn_paths",
     "scan_cache",
 )
 
@@ -112,11 +98,13 @@ def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
         conn.executescript(SCHEMA_SQL)
-        tool_columns = {
-            row[1] for row in conn.execute("pragma table_info(tools)").fetchall()
+        invocation_columns = {
+            row[1] for row in conn.execute("pragma table_info(invocations)").fetchall()
         }
-        if "operation_context" not in tool_columns:
-            conn.execute("alter table tools add column operation_context text")
+        if "bundle_json" not in invocation_columns:
+            conn.execute("alter table invocations add column bundle_json text")
+        if "bundle_fingerprint" not in invocation_columns:
+            conn.execute("alter table invocations add column bundle_fingerprint text")
         conn.execute(
             "create index if not exists token_events_actor_ts on token_events(actor_id, ts)"
         )

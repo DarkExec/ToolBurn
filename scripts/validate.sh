@@ -33,6 +33,7 @@ require_file src/toolburn/pass_receipt.py
 require_file src/toolburn/report.py
 require_file src/toolburn/scan.py
 require_file src/toolburn/schema.py
+require_file src/toolburn/semantics.py
 require_file tests/test_cli.py
 require_file tests/test_pass_receipt.py
 require_file tests/test_schema.py

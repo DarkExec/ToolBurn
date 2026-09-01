@@ -17,19 +17,7 @@ from toolburn.schema import connect
 TOKEN_EVENT_TYPE = "token_count"
 ROLLOUT_GLOB = "rollout-*.jsonl"
 COPILOT_EVENTS_GLOB = "events.jsonl"
-SCAN_PARSER_VERSION = 2
-OPERATION_ORDER = (
-    "contextRecovery",
-    "execution",
-    "validation",
-    "delivery",
-    "edit",
-    "web",
-    "visual",
-    "planning",
-    "wait",
-    "telemetry",
-)
+SCAN_PARSER_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -226,7 +214,7 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
                     "started_at": ts,
                     "line_no": line_no,
                     "cwd": meta.get("cwd") or "",
-                    "operation_context": operation_context_from_call_payload(payload, command),
+                    "bundle": bundle_from_call_payload(payload, command),
                 }
             continue
 
@@ -336,7 +324,11 @@ def parse_copilot_session_file(path: Path, source_label: str) -> ParsedSession |
                         "ended_at": ts,
                         "line_no": line_no,
                         "cwd": copilot_workspace(meta),
-                        "operation_context": operation_context(command),
+                        "bundle": {
+                            "wrapper": "github-copilot",
+                            "tools": [str(data.get("toolName") or "tool")],
+                            "commands": [command],
+                        },
                         "output_bytes": len(str(data.get("result") or "").encode("utf-8")),
                         "output_fingerprint": sha256_text(str(data.get("result") or "")),
                         "output_shape": output_shape(str(data.get("result") or "")),
@@ -477,13 +469,12 @@ def insert_invocations(conn, parsed: ParsedSession) -> int:
         tool_id = stable_id("tool", normalize_command(command))
         conn.execute(
             """
-            insert or replace into tools(tool_id, normalized_command, operation_context, executable, cwd, fingerprint, metadata_json)
-            values(?, ?, ?, ?, ?, ?, ?)
+            insert or replace into tools(tool_id, normalized_command, executable, cwd, fingerprint, metadata_json)
+            values(?, ?, ?, ?, ?, ?)
             """,
             (
                 tool_id,
                 normalize_command(command),
-                invocation.get("operation_context") or operation_context(command),
                 executable(command),
                 invocation.get("cwd") or parsed.workspace,
                 stable_id("cmd", normalize_command(command)),
@@ -495,9 +486,10 @@ def insert_invocations(conn, parsed: ParsedSession) -> int:
             """
             insert or replace into invocations(
               invocation_id, session_id, actor_id, tool_id, started_at, ended_at,
-              output_bytes, output_fingerprint, output_shape_json
+              output_bytes, output_fingerprint, output_shape_json,
+              bundle_json, bundle_fingerprint
             )
-            values(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 invocation_id,
@@ -509,6 +501,11 @@ def insert_invocations(conn, parsed: ParsedSession) -> int:
                 int(invocation.get("output_bytes") or 0),
                 invocation.get("output_fingerprint") or "",
                 json.dumps(invocation.get("output_shape") or {}, sort_keys=True),
+                json.dumps(invocation.get("bundle") or {}, sort_keys=True),
+                stable_id(
+                    "bundle",
+                    json.dumps(invocation.get("bundle") or {}, sort_keys=True),
+                ),
             ),
         )
         inserted += 1
@@ -629,28 +626,21 @@ def command_from_call_payload(payload: dict[str, Any]) -> str:
     return tool_context_from_payload(payload, {})
 
 
-def operation_context_from_call_payload(payload: dict[str, Any], command: str) -> str:
+def bundle_from_call_payload(payload: dict[str, Any], command: str) -> dict[str, Any]:
+    wrapper = str(payload.get("name") or payload.get("type") or "tool")
     custom_input = payload.get("input")
     if isinstance(custom_input, str) and custom_input.strip():
-        return operation_context_from_custom_input(custom_input)
-    name = str(payload.get("name") or "").strip()
-    named_context = operation_context_for_tool(name)
-    if name.lower() not in {"exec", "exec_command", "shell", "shell_command"} and named_context != "execution":
-        return named_context
-    return operation_context(command)
-
-
-def operation_context_from_custom_input(raw: str) -> str:
-    contexts: list[str] = []
-    nested_tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", raw)
-    commands = custom_commands(raw)
-    for name in nested_tools:
-        if name != "exec_command":
-            contexts.append(operation_context_for_tool(name))
-    contexts.extend(operation_context(command) for command in commands)
-    if nested_tools.count("exec_command") > len(commands):
-        contexts.append("execution")
-    return combine_operation_contexts(contexts or ["execution"])
+        tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", custom_input)
+        return {
+            "wrapper": wrapper,
+            "tools": tools or [wrapper],
+            "commands": custom_commands(custom_input),
+        }
+    return {
+        "wrapper": wrapper,
+        "tools": [wrapper],
+        "commands": [command] if command else [],
+    }
 
 
 def custom_commands(raw: str) -> list[str]:
@@ -664,51 +654,6 @@ def custom_commands(raw: str) -> list[str]:
         if isinstance(command, str) and command.strip():
             commands.append(command.strip())
     return commands
-
-
-def operation_context(command: str) -> str:
-    lowered = normalize_command(command).lower()
-    contexts: list[str] = []
-    if any(marker in lowered for marker in ("wait_agent", "write_stdin", " sleep ")):
-        contexts.append("wait")
-    if "apply_patch" in lowered:
-        contexts.append("edit")
-    if "update_plan" in lowered:
-        contexts.append("planning")
-    if any(marker in lowered for marker in ("pass_telemetry", "codex-session-windup", "toolburn pass")):
-        contexts.append("telemetry")
-    if any(marker in lowered for marker in ("validate", "unittest", "pytest", "playwright", "php -l", "nginx -t")):
-        contexts.append("validation")
-    if any(marker in lowered for marker in ("gh pr ", "git push", "git commit", "git merge", "install.sh", "deploy")):
-        contexts.append("delivery")
-    if re.search(r"(?:^|[;&|]\s*)(?:rg|sed|cat|head|tail|find)\b", lowered) or any(
-        marker in lowered for marker in ("git status", "git log", "git show", "git diff", "gh pr view")
-    ):
-        contexts.append("contextRecovery")
-    return combine_operation_contexts(contexts or ["execution"])
-
-
-def operation_context_for_tool(name: str) -> str:
-    lowered = name.lower()
-    if lowered in {"wait", "wait_agent", "write_stdin"}:
-        return "wait"
-    if "apply_patch" in lowered:
-        return "edit"
-    if "update_plan" in lowered:
-        return "planning"
-    if "web" in lowered:
-        return "web"
-    if "image" in lowered or "screenshot" in lowered:
-        return "visual"
-    return "execution"
-
-
-def combine_operation_contexts(values: Iterable[str]) -> str:
-    contexts: set[str] = set()
-    for value in values:
-        contexts.update(part for part in value.split("+") if part)
-    order = {name: index for index, name in enumerate(OPERATION_ORDER)}
-    return "+".join(sorted(contexts, key=lambda item: (order.get(item, len(order)), item)))
 
 
 def tool_context_from_custom_input(payload: dict[str, Any], raw: str) -> str:

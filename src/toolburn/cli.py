@@ -20,9 +20,10 @@ from toolburn.pass_receipt import (
     format_pass_markdown,
     inspect_hotspot,
 )
-from toolburn.report import burn_path_report, export_json, format_explain, format_table, du_report, explain_report, top_report
+from toolburn.report import episode_report, export_json, format_episode_table, format_explain, format_table, du_report, explain_report, top_report
 from toolburn.scan import SourceSpec, scan_sources
 from toolburn.schema import initialize_database, table_names
+from toolburn.semantics import DEFAULT_SEMANTICS_PATH, SemanticCatalogError, format_semantic_summary, load_semantic_catalog, semantic_summary
 
 
 REPORT_GROUPS = ("actor", "session", "source", "tool")
@@ -68,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     recent_parser.add_argument("--codex", type=Path, default=DEFAULT_CODEX_ROOT)
     recent_parser.add_argument("--openclaw", type=Path, default=DEFAULT_OPENCLAW_ROOT)
     recent_parser.add_argument("--copilot", type=Path, default=DEFAULT_COPILOT_ROOT)
+    recent_parser.add_argument("--semantics", type=Path, help="explicit versioned semantic catalog JSON")
 
     recent24_parser = subparsers.add_parser(
         "24h", help="shortcut for recent token burn over the last 24 hours"
@@ -79,6 +81,7 @@ def build_parser() -> argparse.ArgumentParser:
     recent24_parser.add_argument("--codex", type=Path, default=DEFAULT_CODEX_ROOT)
     recent24_parser.add_argument("--openclaw", type=Path, default=DEFAULT_OPENCLAW_ROOT)
     recent24_parser.add_argument("--copilot", type=Path, default=DEFAULT_COPILOT_ROOT)
+    recent24_parser.add_argument("--semantics", type=Path, help="explicit versioned semantic catalog JSON")
 
     subparsers.add_parser("sources", help="show supported and planned evidence sources")
 
@@ -196,6 +199,21 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error("no default Codex/OpenClaw/Copilot session roots found")
             counts = scan_sources(db_path, sources, modified_since=since)
             print(format_scan_counts(counts))
+        semantics_path = args.semantics or DEFAULT_SEMANTICS_PATH
+        if args.semantics is not None and not semantics_path.exists():
+            print(f"toolburn semantics failed: catalog not found: {semantics_path}")
+            return 2
+        try:
+            catalog = load_semantic_catalog(semantics_path) if semantics_path.exists() else None
+        except SemanticCatalogError as exc:
+            print(f"toolburn semantics failed: {exc}")
+            return 2
+        episodes = episode_report(
+            db_path,
+            limit=None,
+            since=since,
+            actor_type=args.actor_type,
+        )
         print(f"since {since}")
         if args.actor_type:
             print(f"actor_type {args.actor_type}")
@@ -213,17 +231,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         print("")
-        print("Top burn paths")
-        print(
-            format_table(
-                burn_path_report(
-                    db_path,
-                    limit=args.limit,
-                    since=since,
-                    actor_type=args.actor_type,
-                )
-            )
-        )
+        print("Top factual episodes")
+        print(format_episode_table(episodes[: args.limit]))
+        print("")
+        print("Semantic coverage")
+        print(format_semantic_summary(semantic_summary(episodes, catalog), semantics_path))
         return 0
 
     if args.command == "sources":

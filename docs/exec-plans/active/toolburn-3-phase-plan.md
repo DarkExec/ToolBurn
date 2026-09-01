@@ -10,7 +10,7 @@ Here is the 3-phase plan I’d use.
 
 Build a local-first CLI that answers one question brutally well:
 
-> **Where did my token usage go, and what exact tools/actors caused it?**
+> **Where did my token usage go, and what exact tools/actors were observed near it?**
 
 This phase should be read-only, deterministic, and useful on day one against the Voiceze/OpenClaw incident. The acceptance test is that ToolBurn can parse the raw logs, reconstruct the recurring heartbeat burn, and clearly show that the no-op Discord heartbeat was the dominant sink. The postmortem gives the perfect benchmark: the old heartbeat session added **30,782,972 raw tokens**, including **30,182,400 cached input tokens**, and burned **17,126,041 raw tokens in the last 5 hours** before the final mitigation. 
 
@@ -49,10 +49,10 @@ only escalate non-zero candidates/errors
 
 ## Core objects
 
-ToolBurn should not start with “sessions” as the primary abstraction. Sessions are raw material. The product abstraction should be:
+ToolBurn should not start with inferred categories as the primary abstraction. Session evidence is raw material. The factual abstraction should be:
 
 ```text
-Burn Path = actor → tool/command → payload/output → model-visible context → token event → recurrence/rate
+Factual Episode = actor + session + nearby invocation bundle + token event
 ```
 
 Define these objects early:
@@ -79,8 +79,11 @@ Invocation
 Token Event
   raw input, cached input, output, total, model, timestamp, session path
 
-Burn Path
-  grouped chain from actor to token usage
+Factual Episode
+  stable grouping of token events around one observed invocation, without a causal claim
+
+Semantic Assignment
+  versioned local interpretation attached to an exact factual episode ID
 
 Opportunity
   cap, cache, compress, summarize, diff, adapter, deterministic runner, remove
@@ -200,17 +203,6 @@ token_events(
   source_path text
 );
 
-burn_paths(
-  burn_path_id text primary key,
-  actor_id text,
-  tool_id text,
-  pattern text,
-  cadence_seconds integer,
-  tokens_24h integer,
-  tokens_per_invocation_p95 integer,
-  confidence real,
-  metadata_json text
-);
 ```
 
 ## Phase 1 commands
