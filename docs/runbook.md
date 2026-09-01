@@ -41,6 +41,8 @@ The normal local check is:
 
 ```bash
 toolburn 24h
+toolburn 48h
+toolburn 7d
 toolburn recent --hours 23 --limit 20
 toolburn pass current
 toolburn pass current --format json

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toolburn.cli import main
+from toolburn.cli import build_parser, main
 from toolburn.report import episode_report
 from toolburn.scan import bundle_from_call_payload, command_from_call_payload
 from toolburn.semantics import SemanticCatalogError, load_semantic_catalog
@@ -654,6 +654,13 @@ class CliTests(unittest.TestCase):
             self.assertIn("Top actors", output)
             self.assertIn("Top factual episodes", output)
             self.assertIn("Semantic coverage", output)
+
+    def test_recent_shortcuts_resolve_to_exact_hours(self) -> None:
+        parser = build_parser()
+        for shortcut, expected_hours in (("24h", 24.0), ("48h", 48.0), ("7d", 168.0)):
+            with self.subTest(shortcut=shortcut):
+                args = parser.parse_args([shortcut])
+                self.assertEqual(args.hours, expected_hours)
 
     def test_recent_ignores_source_files_outside_requested_window(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
