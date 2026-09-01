@@ -31,6 +31,24 @@ ACTOR_TYPES = ("human", "background", "unknown")
 DEFAULT_CODEX_ROOT = Path("/root/.codex/sessions")
 DEFAULT_OPENCLAW_ROOT = Path("/root/.openclaw/agents/main/agent/codex-home/sessions")
 DEFAULT_COPILOT_ROOT = Path("/root/.copilot/session-state")
+RECENT_SHORTCUT_HOURS = {"24h": 24.0, "48h": 48.0, "7d": 168.0}
+
+
+def add_recent_report_arguments(
+    parser: argparse.ArgumentParser, *, hours: float | None = None
+) -> None:
+    if hours is None:
+        parser.add_argument("--hours", type=float, default=24.0, help="lookback window")
+    else:
+        parser.set_defaults(hours=hours)
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--db", type=Path, help="SQLite DB path")
+    parser.add_argument("--no-scan", action="store_true", help="reuse the DB")
+    parser.add_argument("--actor-type", choices=ACTOR_TYPES, help="only show one actor type")
+    parser.add_argument("--codex", type=Path, default=DEFAULT_CODEX_ROOT)
+    parser.add_argument("--openclaw", type=Path, default=DEFAULT_OPENCLAW_ROOT)
+    parser.add_argument("--copilot", type=Path, default=DEFAULT_COPILOT_ROOT)
+    parser.add_argument("--semantics", type=Path, help="explicit versioned semantic catalog JSON")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,27 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     recent_parser = subparsers.add_parser(
         "recent", help="scan local defaults and show recent token burn"
     )
-    recent_parser.add_argument("--hours", type=float, default=24.0, help="lookback window")
-    recent_parser.add_argument("--limit", type=int, default=10)
-    recent_parser.add_argument("--db", type=Path, help="SQLite DB path")
-    recent_parser.add_argument("--no-scan", action="store_true", help="reuse the DB")
-    recent_parser.add_argument("--actor-type", choices=ACTOR_TYPES, help="only show one actor type")
-    recent_parser.add_argument("--codex", type=Path, default=DEFAULT_CODEX_ROOT)
-    recent_parser.add_argument("--openclaw", type=Path, default=DEFAULT_OPENCLAW_ROOT)
-    recent_parser.add_argument("--copilot", type=Path, default=DEFAULT_COPILOT_ROOT)
-    recent_parser.add_argument("--semantics", type=Path, help="explicit versioned semantic catalog JSON")
+    add_recent_report_arguments(recent_parser)
 
-    recent24_parser = subparsers.add_parser(
-        "24h", help="shortcut for recent token burn over the last 24 hours"
-    )
-    recent24_parser.add_argument("--limit", type=int, default=10)
-    recent24_parser.add_argument("--db", type=Path, help="SQLite DB path")
-    recent24_parser.add_argument("--no-scan", action="store_true", help="reuse the DB")
-    recent24_parser.add_argument("--actor-type", choices=ACTOR_TYPES, help="only show one actor type")
-    recent24_parser.add_argument("--codex", type=Path, default=DEFAULT_CODEX_ROOT)
-    recent24_parser.add_argument("--openclaw", type=Path, default=DEFAULT_OPENCLAW_ROOT)
-    recent24_parser.add_argument("--copilot", type=Path, default=DEFAULT_COPILOT_ROOT)
-    recent24_parser.add_argument("--semantics", type=Path, help="explicit versioned semantic catalog JSON")
+    for shortcut, hours in RECENT_SHORTCUT_HOURS.items():
+        shortcut_parser = subparsers.add_parser(
+            shortcut, help=f"shortcut for recent token burn over the last {shortcut}"
+        )
+        add_recent_report_arguments(shortcut_parser, hours=hours)
 
     subparsers.add_parser("sources", help="show supported and planned evidence sources")
 
@@ -190,9 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         print(format_scan_counts(counts))
         return 0
 
-    if args.command in {"recent", "24h"}:
+    if args.command == "recent" or args.command in RECENT_SHORTCUT_HOURS:
         db_path = args.db or default_recent_db_path()
-        since = hours_ago_iso(args.hours if args.command == "recent" else 24)
+        since = hours_ago_iso(args.hours)
         sources = existing_default_sources(args)
         if not args.no_scan:
             if not sources:

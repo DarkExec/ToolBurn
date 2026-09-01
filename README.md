@@ -117,11 +117,15 @@ Each hotspot includes an exact `toolburn inspect` command. Inspection prints one
 
 ```bash
 toolburn 24h
+toolburn 48h
+toolburn 7d
 toolburn recent --hours 24 --limit 20
 toolburn recent --hours 6 --limit 15
 toolburn recent --hours 1 --limit 20
 toolburn recent --hours 24 --no-scan
 ```
+
+`24h`, `48h`, and `7d` are exact convenience aliases for `recent --hours 24`, `recent --hours 48`, and `recent --hours 168`; they use the same cache, filters, factual episodes, and semantic catalog.
 
 ### Human vs Background Spend
 
