@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from toolburn.cli import main
+from toolburn.scan import command_from_call_payload
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -397,7 +398,72 @@ def cached_validate_attribution_rows() -> list[dict]:
     ]
 
 
+def custom_tool_attribution_rows() -> list[dict]:
+    return [
+        {
+            "timestamp": "2026-08-31T22:54:15.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "custom-tool-session",
+                "timestamp": "2026-08-31T22:54:15.000Z",
+                "cwd": "/srv/dark/repos/toolburn",
+                "originator": "codex",
+            },
+        },
+        {
+            "timestamp": "2026-08-31T22:54:20.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "call-custom-exec",
+                "name": "exec",
+                "input": (
+                    'const r = await tools.exec_command({"cmd":"rg -n owner .",'
+                    '"workdir":"/srv/dark"}); text(r.output);'
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-08-31T22:54:21.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "call-custom-exec",
+                "output": "owner result",
+            },
+        },
+        {
+            "timestamp": "2026-08-31T22:54:24.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 200,
+                        "cached_input_tokens": 10,
+                        "output_tokens": 10,
+                        "total_tokens": 210,
+                    },
+                },
+            },
+        },
+    ]
+
+
 class CliTests(unittest.TestCase):
+    def test_custom_wrapper_combines_nested_tools_canonically(self) -> None:
+        payload = {
+            "name": "exec",
+            "input": (
+                'const write = await tools.write_stdin({"session_id": 7}); '
+                'const run = await tools.exec_command({"cmd":"git status --short"});'
+            ),
+        }
+        self.assertEqual(
+            command_from_call_payload(payload),
+            "mixed:exec_command+write_stdin",
+        )
+
     def test_help_returns_zero(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -538,6 +604,25 @@ class CliTests(unittest.TestCase):
                 output.index("python3 expensive_context.py"),
                 output.index("./scripts/validate.sh"),
             )
+
+    def test_scan_attributes_custom_exec_wrapper_to_nested_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-08-31T22-54-15-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            write_jsonl(evidence, custom_tool_attribution_rows())
+
+            scan_out = io.StringIO()
+            with contextlib.redirect_stdout(scan_out):
+                self.assertEqual(main(["scan", "--db", str(db_path), "--codex", str(evidence)]), 0)
+            self.assertIn("1 invocations", scan_out.getvalue())
+
+            tool_out = io.StringIO()
+            with contextlib.redirect_stdout(tool_out):
+                self.assertEqual(main(["top", "--db", str(db_path), "--by", "tool"]), 0)
+            output = tool_out.getvalue()
+            self.assertIn("rg -n owner .", output)
+            self.assertNotIn("no-tool-context", output)
 
     def test_scan_supports_github_copilot_events_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

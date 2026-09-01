@@ -63,6 +63,8 @@ If a token event has no nearby tool invocation, Toolburn reports it as
 or adapter/source gap, and should be diagnosed at the actor or session level
 instead of as a fake `unknown.tool`.
 
+When Codex wraps one underlying tool call, Toolburn attributes the event to that nested tool or command. When one wrapper combines several calls, Toolburn keeps the boundary honest with a `multiple:<tool>` or `mixed:<tool>+<tool>` context instead of pretending that one nested call caused all subsequent token usage.
+
 See supported evidence sources:
 
 ```bash
