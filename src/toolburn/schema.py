@@ -32,6 +32,7 @@ create table if not exists sessions(
 create table if not exists tools(
   tool_id text primary key,
   normalized_command text,
+  operation_context text,
   executable text,
   cwd text,
   fingerprint text,
@@ -83,6 +84,16 @@ create table if not exists burn_paths(
   foreign key(actor_id) references actors(actor_id),
   foreign key(tool_id) references tools(tool_id)
 );
+
+create table if not exists scan_cache(
+  source_path text primary key,
+  source_label text,
+  size_bytes integer,
+  mtime_ns integer,
+  parser_version integer,
+  session_id text,
+  scanned_at text
+);
 """
 
 
@@ -93,6 +104,7 @@ REQUIRED_TABLES = (
     "invocations",
     "token_events",
     "burn_paths",
+    "scan_cache",
 )
 
 
@@ -100,11 +112,22 @@ def initialize_database(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
         conn.executescript(SCHEMA_SQL)
+        tool_columns = {
+            row[1] for row in conn.execute("pragma table_info(tools)").fetchall()
+        }
+        if "operation_context" not in tool_columns:
+            conn.execute("alter table tools add column operation_context text")
         conn.execute(
             "create index if not exists token_events_actor_ts on token_events(actor_id, ts)"
         )
         conn.execute(
             "create index if not exists token_events_session_ts on token_events(session_id, ts)"
+        )
+        conn.execute(
+            "create index if not exists token_events_source_path on token_events(source_path)"
+        )
+        conn.execute(
+            "create index if not exists sessions_path on sessions(path)"
         )
         conn.commit()
 

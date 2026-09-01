@@ -3,13 +3,14 @@ from __future__ import annotations
 import contextlib
 import json
 import io
+import os
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 from toolburn.cli import main
-from toolburn.scan import command_from_call_payload
+from toolburn.scan import command_from_call_payload, operation_context_from_call_payload
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -463,6 +464,10 @@ class CliTests(unittest.TestCase):
             command_from_call_payload(payload),
             "mixed:exec_command+write_stdin",
         )
+        self.assertEqual(
+            operation_context_from_call_payload(payload, command_from_call_payload(payload)),
+            "contextRecovery+wait",
+        )
 
     def test_help_returns_zero(self) -> None:
         stdout = io.StringIO()
@@ -546,15 +551,17 @@ class CliTests(unittest.TestCase):
                             str(root / "missing-codex"),
                             "--openclaw",
                             str(sessions),
+                            "--copilot",
+                            str(root / "missing-copilot"),
                         ]
                     ),
                     0,
                 )
             output = stdout.getvalue()
             self.assertIn("Top actors", output)
-            self.assertIn("Top tool-contexts", output)
+            self.assertIn("Top burn paths", output)
+            self.assertIn("background.openclaw.gos-watchdog-30m -> execution", output)
             self.assertIn("uncached", output)
-            self.assertIn("run_watchdog_cycle.py", output)
 
     def test_24h_shortcut_prints_recent_burn(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -576,6 +583,8 @@ class CliTests(unittest.TestCase):
                             str(root / "missing-codex"),
                             "--openclaw",
                             str(sessions),
+                            "--copilot",
+                            str(root / "missing-copilot"),
                         ]
                     ),
                     0,
@@ -584,7 +593,37 @@ class CliTests(unittest.TestCase):
             self.assertIn("scanned", output)
             self.assertIn("since ", output)
             self.assertIn("Top actors", output)
-            self.assertIn("Top tool-contexts", output)
+            self.assertIn("Top burn paths", output)
+
+    def test_recent_ignores_source_files_outside_requested_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "sessions" / "rollout-2026-06-01T22-54-15-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            write_jsonl(evidence, fixture_rows())
+            os.utime(evidence, (0, 0))
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(
+                    main(
+                        [
+                            "recent",
+                            "--hours",
+                            "24",
+                            "--db",
+                            str(db_path),
+                            "--codex",
+                            str(evidence.parent),
+                            "--openclaw",
+                            str(root / "missing-openclaw"),
+                            "--copilot",
+                            str(root / "missing-copilot"),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn("scanned 0 changed files, ignored 1 outside window", stdout.getvalue())
 
     def test_tool_report_orders_by_uncached_context_not_cached_raw_tokens(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -623,6 +662,35 @@ class CliTests(unittest.TestCase):
             output = tool_out.getvalue()
             self.assertIn("rg -n owner .", output)
             self.assertNotIn("no-tool-context", output)
+
+    def test_scan_skips_unchanged_sources_and_reparses_changed_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-08-31T22-54-15-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            rows = custom_tool_attribution_rows()
+            write_jsonl(evidence, rows)
+
+            main(["scan", "--db", str(db_path), "--codex", str(evidence)])
+
+            unchanged_out = io.StringIO()
+            with contextlib.redirect_stdout(unchanged_out):
+                self.assertEqual(main(["scan", "--db", str(db_path), "--codex", str(evidence)]), 0)
+            self.assertIn("scanned 0 changed files, skipped 1 unchanged", unchanged_out.getvalue())
+
+            rows[-1]["payload"]["info"]["last_token_usage"]["output_tokens"] = 11
+            rows[-1]["payload"]["info"]["last_token_usage"]["total_tokens"] = 211
+            write_jsonl(evidence, rows)
+
+            changed_out = io.StringIO()
+            with contextlib.redirect_stdout(changed_out):
+                self.assertEqual(main(["scan", "--db", str(db_path), "--codex", str(evidence)]), 0)
+            self.assertIn("scanned 1 changed files", changed_out.getvalue())
+
+            tool_out = io.StringIO()
+            with contextlib.redirect_stdout(tool_out):
+                self.assertEqual(main(["top", "--db", str(db_path), "--by", "tool"]), 0)
+            self.assertIn("211 raw", tool_out.getvalue())
 
     def test_scan_supports_github_copilot_events_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

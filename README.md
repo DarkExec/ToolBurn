@@ -49,14 +49,9 @@ Shortcut:
 toolburn 24h
 ```
 
-That scans the default local session roots and prints the top actors and
-tool-contexts for the lookback window.
+That scans session files modified within the requested window and prints the top actors and actor-linked burn paths. Unchanged in-window files are reused from the local database, so the normal command only reparses active or changed sessions. Use explicit `toolburn scan` when you want to build full history.
 
-Actor and session totals are token spend. Tool-context rows are attribution
-hints: they show token events near a command in the transcript, not proof that
-the command itself called a model. Tool-context reports include an `uncached`
-column and rank by uncached tokens so deterministic commands with large cached
-context do not look like the primary burn source.
+Actor and session totals are token spend. Burn-path rows combine the actor with deterministic Harness-style operation contexts such as `contextRecovery`, `validation`, `delivery`, `edit`, `web`, and `wait`. They are attribution hints: they show token events near operations in the transcript, not proof that the operation itself called a model. Burn-path reports include an `uncached` column and rank by uncached tokens so deterministic operations with large cached context do not look like the primary burn source.
 
 If a token event has no nearby tool invocation, Toolburn reports it as
 `no-tool-context:<actor>`. That usually means a model-only turn, final answer,
@@ -64,6 +59,8 @@ or adapter/source gap, and should be diagnosed at the actor or session level
 instead of as a fake `unknown.tool`.
 
 When Codex wraps one underlying tool call, Toolburn attributes the event to that nested tool or command. When one wrapper combines several calls, Toolburn keeps the boundary honest with a `multiple:<tool>` or `mixed:<tool>+<tool>` context instead of pretending that one nested call caused all subsequent token usage.
+
+Use `toolburn top --db /tmp/toolburn-recent.sqlite --by tool` when a burn path warrants exact command-level drilldown.
 
 See supported evidence sources:
 

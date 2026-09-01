@@ -59,6 +59,48 @@ def top_report(
     )
 
 
+def burn_path_report(
+    db_path: Path,
+    limit: int = 20,
+    since: str | None = None,
+    actor_type: str | None = None,
+) -> list[dict]:
+    actor = canonical_actor_sql()
+    context = "coalesce(nullif(tools.operation_context, ''), 'no-tool-context')"
+    joins = """
+        left join invocations on invocations.invocation_id = token_events.invocation_id
+        left join tools on tools.tool_id = invocations.tool_id
+    """
+    filters = []
+    params: list[object] = []
+    if since:
+        filters.append("token_events.ts >= ?")
+        params.append(since)
+    if actor_type:
+        joins += "\njoin actors on actors.actor_id = token_events.actor_id"
+        filters.append("actors.actor_type = ?")
+        params.append(actor_type)
+    where = f"where {' and '.join(filters)}" if filters else ""
+    query = f"""
+        select {actor} || ' -> ' || {context} as label,
+               count(token_events.token_event_id) as events,
+               sum(raw_total_tokens) as raw_tokens,
+               sum(input_tokens) as input_tokens,
+               sum(cached_input_tokens) as cached_input_tokens,
+               sum(output_tokens) as output_tokens,
+               sum(max(input_tokens - cached_input_tokens, 0) + output_tokens) as uncached_tokens
+        from token_events
+        {joins}
+        {where}
+        group by {actor}, {context}
+        order by uncached_tokens desc
+        limit ?
+    """
+    with connect(db_path) as conn:
+        rows = conn.execute(query, [*params, limit]).fetchall()
+    return [dict(row) for row in rows]
+
+
 def explain_report(db_path: Path, target: str) -> dict:
     with connect(db_path) as conn:
         actor = conn.execute(
