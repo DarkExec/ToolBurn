@@ -131,7 +131,7 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
                 }
             continue
 
-        if payload.get("type") == "function_call_output":
+        if payload.get("type") in {"function_call_output", "custom_tool_call_output"}:
             call_id = payload.get("call_id") or ""
             pending = pending_calls.pop(call_id, None)
             if pending:
@@ -503,6 +503,15 @@ def evidence_excerpt(text: str, limit: int = 2000) -> str:
 
 
 def command_from_call_payload(payload: dict[str, Any]) -> str:
+    custom_input = payload.get("input")
+    if isinstance(custom_input, str) and custom_input.strip():
+        return tool_context_from_custom_input(payload, custom_input)
+    if isinstance(custom_input, dict):
+        command = custom_input.get("command") or custom_input.get("cmd")
+        if isinstance(command, str):
+            return command.strip()
+        return tool_context_from_payload(payload, custom_input)
+
     arguments = payload.get("arguments")
     if isinstance(arguments, str):
         try:
@@ -520,6 +529,27 @@ def command_from_call_payload(payload: dict[str, Any]) -> str:
         if isinstance(command, str):
             return command.strip()
         return tool_context_from_payload(payload, arguments)
+    return tool_context_from_payload(payload, {})
+
+
+def tool_context_from_custom_input(payload: dict[str, Any], raw: str) -> str:
+    nested_tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", raw)
+    if len(nested_tools) == 1 and nested_tools[0] == "exec_command":
+        match = re.search(r'(?:(?:"cmd")|\bcmd)\s*:\s*("(?:\\.|[^"\\])*")', raw)
+        if match:
+            try:
+                command = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                command = ""
+            if isinstance(command, str) and command.strip():
+                return command.strip()
+    if nested_tools:
+        unique_tools = sorted(set(nested_tools))
+        if len(nested_tools) == 1:
+            return unique_tools[0]
+        if len(unique_tools) == 1:
+            return f"multiple:{unique_tools[0]}"
+        return f"mixed:{'+'.join(unique_tools)}"
     return tool_context_from_payload(payload, {})
 
 
