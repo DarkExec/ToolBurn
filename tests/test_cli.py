@@ -10,7 +10,9 @@ import unittest
 from pathlib import Path
 
 from toolburn.cli import main
-from toolburn.scan import command_from_call_payload, operation_context_from_call_payload
+from toolburn.report import episode_report
+from toolburn.scan import bundle_from_call_payload, command_from_call_payload
+from toolburn.semantics import SemanticCatalogError, load_semantic_catalog
 
 
 def write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -451,6 +453,57 @@ def custom_tool_attribution_rows() -> list[dict]:
     ]
 
 
+def distinct_bundle_rows() -> list[dict]:
+    rows = custom_tool_attribution_rows()[:1]
+    for index, commands in enumerate(
+        (("rg -n owner .", "git status --short"), ("pytest -q", "git push origin main")),
+        start=1,
+    ):
+        call_id = f"call-bundle-{index}"
+        rows.extend(
+            [
+                {
+                    "timestamp": f"2026-08-31T22:5{index}:20.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "call_id": call_id,
+                        "name": "exec",
+                        "input": (
+                            f'const a = await tools.exec_command({{"cmd":{json.dumps(commands[0])}}}); '
+                            f'const b = await tools.exec_command({{"cmd":{json.dumps(commands[1])}}});'
+                        ),
+                    },
+                },
+                {
+                    "timestamp": f"2026-08-31T22:5{index}:21.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": call_id,
+                        "output": f"bundle {index} result",
+                    },
+                },
+                {
+                    "timestamp": f"2026-08-31T22:5{index}:24.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 100 * index,
+                                "cached_input_tokens": 10,
+                                "output_tokens": 10,
+                                "total_tokens": 100 * index + 10,
+                            }
+                        },
+                    },
+                },
+            ]
+        )
+    return rows
+
+
 class CliTests(unittest.TestCase):
     def test_custom_wrapper_combines_nested_tools_canonically(self) -> None:
         payload = {
@@ -465,8 +518,12 @@ class CliTests(unittest.TestCase):
             "mixed:exec_command+write_stdin",
         )
         self.assertEqual(
-            operation_context_from_call_payload(payload, command_from_call_payload(payload)),
-            "contextRecovery+wait",
+            bundle_from_call_payload(payload, command_from_call_payload(payload)),
+            {
+                "wrapper": "exec",
+                "tools": ["write_stdin", "exec_command"],
+                "commands": ["git status --short"],
+            },
         )
 
     def test_help_returns_zero(self) -> None:
@@ -559,8 +616,10 @@ class CliTests(unittest.TestCase):
                 )
             output = stdout.getvalue()
             self.assertIn("Top actors", output)
-            self.assertIn("Top burn paths", output)
-            self.assertIn("background.openclaw.gos-watchdog-30m -> execution", output)
+            self.assertIn("Top factual episodes", output)
+            self.assertIn("background.openclaw.gos-watchdog-30m", output)
+            self.assertIn("run_watchdog_cycle.py", output)
+            self.assertIn("Semantic coverage", output)
             self.assertIn("uncached", output)
 
     def test_24h_shortcut_prints_recent_burn(self) -> None:
@@ -593,7 +652,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("scanned", output)
             self.assertIn("since ", output)
             self.assertIn("Top actors", output)
-            self.assertIn("Top burn paths", output)
+            self.assertIn("Top factual episodes", output)
+            self.assertIn("Semantic coverage", output)
 
     def test_recent_ignores_source_files_outside_requested_window(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -663,6 +723,24 @@ class CliTests(unittest.TestCase):
             self.assertIn("rg -n owner .", output)
             self.assertNotIn("no-tool-context", output)
 
+    def test_same_generic_tool_label_retains_distinct_invocation_bundles(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-08-31T22-54-15-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            write_jsonl(evidence, distinct_bundle_rows())
+            main(["scan", "--db", str(db_path), "--codex", str(evidence)])
+
+            episodes = episode_report(db_path, limit=None)
+            self.assertEqual(len(episodes), 2)
+            self.assertEqual(
+                {row["normalized_command"] for row in episodes},
+                {"multiple:exec_command"},
+            )
+            bundles = [json.loads(row["bundle_json"])["commands"] for row in episodes]
+            self.assertIn(["rg -n owner .", "git status --short"], bundles)
+            self.assertIn(["pytest -q", "git push origin main"], bundles)
+
     def test_scan_skips_unchanged_sources_and_reparses_changed_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -691,6 +769,91 @@ class CliTests(unittest.TestCase):
             with contextlib.redirect_stdout(tool_out):
                 self.assertEqual(main(["top", "--db", str(db_path), "--by", "tool"]), 0)
             self.assertIn("211 raw", tool_out.getvalue())
+
+    def test_recent_applies_explicit_versioned_semantics_to_stable_episode_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-08-31T22-54-15-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            catalog_path = root / "semantics.json"
+            write_jsonl(evidence, custom_tool_attribution_rows())
+            main(["scan", "--db", str(db_path), "--codex", str(evidence)])
+            episode_id = episode_report(db_path, limit=1)[0]["episode_id"]
+            catalog_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "toolburn-semantics/v1",
+                        "definitions": [
+                            {
+                                "id": "maintenance.backup-setup",
+                                "version": 1,
+                                "description": "Set up durable backups during maintenance.",
+                            }
+                        ],
+                        "assignments": [
+                            {
+                                "episode_id": episode_id,
+                                "semantic_id": "maintenance.backup-setup",
+                                "semantic_version": 1,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(
+                    main(
+                        [
+                            "recent",
+                            "--hours",
+                            "999999",
+                            "--db",
+                            str(db_path),
+                            "--no-scan",
+                            "--semantics",
+                            str(catalog_path),
+                        ]
+                    ),
+                    0,
+                )
+            output = stdout.getvalue()
+            self.assertIn("1/1 episodes labeled", output)
+            self.assertIn("maintenance.backup-setup@1", output)
+
+    def test_semantic_catalog_rejects_multiple_assignments_for_one_episode(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "semantics.json"
+            definitions = [
+                {"id": "maintenance.one", "version": 1, "description": "One."},
+                {"id": "maintenance.two", "version": 1, "description": "Two."},
+            ]
+            episode_id = "0123456789abcdef01234567"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "toolburn-semantics/v1",
+                        "definitions": definitions,
+                        "assignments": [
+                            {
+                                "episode_id": episode_id,
+                                "semantic_id": "maintenance.one",
+                                "semantic_version": 1,
+                            },
+                            {
+                                "episode_id": episode_id,
+                                "semantic_id": "maintenance.two",
+                                "semantic_version": 1,
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(SemanticCatalogError, "multiple semantic assignments"):
+                load_semantic_catalog(path)
 
     def test_scan_supports_github_copilot_events_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

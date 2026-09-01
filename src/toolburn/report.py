@@ -59,14 +59,13 @@ def top_report(
     )
 
 
-def burn_path_report(
+def episode_report(
     db_path: Path,
-    limit: int = 20,
+    limit: int | None = 20,
     since: str | None = None,
     actor_type: str | None = None,
 ) -> list[dict]:
     actor = canonical_actor_sql()
-    context = "coalesce(nullif(tools.operation_context, ''), 'no-tool-context')"
     joins = """
         left join invocations on invocations.invocation_id = token_events.invocation_id
         left join tools on tools.tool_id = invocations.tool_id
@@ -81,24 +80,82 @@ def burn_path_report(
         filters.append("actors.actor_type = ?")
         params.append(actor_type)
     where = f"where {' and '.join(filters)}" if filters else ""
+    limit_sql = "limit ?" if limit is not None else ""
+    if limit is not None:
+        params.append(limit)
     query = f"""
-        select {actor} || ' -> ' || {context} as label,
+        select coalesce(token_events.invocation_id, token_events.token_event_id) as episode_id,
+               {actor} as actor_id,
+               token_events.session_id,
+               min(token_events.ts) as started_at,
                count(token_events.token_event_id) as events,
                sum(raw_total_tokens) as raw_tokens,
                sum(input_tokens) as input_tokens,
                sum(cached_input_tokens) as cached_input_tokens,
                sum(output_tokens) as output_tokens,
-               sum(max(input_tokens - cached_input_tokens, 0) + output_tokens) as uncached_tokens
+               sum(max(input_tokens - cached_input_tokens, 0) + output_tokens) as uncached_tokens,
+               tools.normalized_command,
+               invocations.bundle_json,
+               invocations.bundle_fingerprint
         from token_events
         {joins}
         {where}
-        group by {actor}, {context}
+        group by coalesce(token_events.invocation_id, token_events.token_event_id),
+                 {actor}, token_events.session_id, tools.normalized_command,
+                 invocations.bundle_json, invocations.bundle_fingerprint
         order by uncached_tokens desc
-        limit ?
+        {limit_sql}
     """
     with connect(db_path) as conn:
-        rows = conn.execute(query, [*params, limit]).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def format_episode_table(rows: list[dict]) -> str:
+    if not rows:
+        return "no rows"
+    formatted = []
+    for source in rows:
+        row = dict(source)
+        row["label"] = episode_label(row)
+        formatted.append(row)
+    return format_table(formatted)
+
+
+def episode_label(row: dict) -> str:
+    timestamp = str(row.get("started_at") or "")
+    actor = str(row.get("actor_id") or "unknown")
+    episode_id = str(row.get("episode_id") or "")
+    bundle = format_bundle(row.get("bundle_json"), row.get("normalized_command"))
+    return f"{timestamp}  {actor}  episode:{episode_id}  {bundle}"
+
+
+def format_bundle(raw_bundle: object, fallback: object, limit: int = 180) -> str:
+    bundle: dict = {}
+    if isinstance(raw_bundle, str) and raw_bundle:
+        try:
+            decoded = json.loads(raw_bundle)
+        except json.JSONDecodeError:
+            decoded = {}
+        if isinstance(decoded, dict):
+            bundle = decoded
+    tools = [str(item) for item in bundle.get("tools", []) if str(item)]
+    commands = [compact_command(str(item)) for item in bundle.get("commands", []) if str(item)]
+    parts = []
+    if tools:
+        counts: dict[str, int] = {}
+        for tool in tools:
+            counts[tool] = counts.get(tool, 0) + 1
+        parts.append("+".join(f"{tool}x{count}" if count > 1 else tool for tool, count in counts.items()))
+    if commands:
+        parts.append("; ".join(commands[:3]) + (f"; +{len(commands) - 3} more" if len(commands) > 3 else ""))
+    text = " | ".join(parts) or str(fallback or "no-tool-context")
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def compact_command(command: str, limit: int = 72) -> str:
+    normalized = " ".join(command.split())
+    return normalized if len(normalized) <= limit else normalized[: limit - 3] + "..."
 
 
 def explain_report(db_path: Path, target: str) -> dict:

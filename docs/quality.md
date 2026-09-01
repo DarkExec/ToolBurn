@@ -14,8 +14,9 @@
 - Raw private evidence is excluded from git.
 - Reports are compact enough to hand to an agent without flooding context.
 - Tool reports must distinguish nearby transcript context from proven tool-caused model calls.
-- Recent reports must link operation context to the actor that incurred the spend and retain exact tool reports for drilldown.
+- Recent reports must expose stable factual episode identity, actor, time, and observed tool bundle without promoting heuristic categories into fact rows.
 - Repeated recent scans must reuse unchanged evidence without hiding changes to active session files.
+- Semantic definitions must be versioned, assignments must reference exact episode IDs, semantic coverage must stay explicit, and applying semantics must not rewrite factual evidence.
 - Token events without a nearby invocation must name the actor as `no-tool-context:<actor>`, not collapse into `unknown.tool`.
 - Pass selection must use `$CODEX_THREAD_ID`, an exact session UUID, an exact JSONL path, or an exact turn; it must never guess the newest session.
 - Pass receipts omit prompts, messages, raw arguments, and raw output while retaining enough operation structure to locate repeated cost.
@@ -28,8 +29,9 @@
 Toolburn is not Phase 1 complete until it can:
 
 - parse selected OpenClaw/Codex local evidence sources
-- attribute token usage by actor, tool-context, session, and time window
+- attribute token usage by actor, tool, session, and time window
 - preserve unknown attribution explicitly
-- detect recurring and wait/poll-shaped burn paths
+- keep semantic interpretation separate from normalized facts
+- surface recurring and wait/poll-shaped factual evidence without assigning causality
 - export compact agent-readable drilldowns
 - run offline without model calls or network access
