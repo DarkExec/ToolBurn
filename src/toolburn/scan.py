@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from bisect import bisect_right
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +17,19 @@ from toolburn.schema import connect
 TOKEN_EVENT_TYPE = "token_count"
 ROLLOUT_GLOB = "rollout-*.jsonl"
 COPILOT_EVENTS_GLOB = "events.jsonl"
+SCAN_PARSER_VERSION = 2
+OPERATION_ORDER = (
+    "contextRecovery",
+    "execution",
+    "validation",
+    "delivery",
+    "edit",
+    "web",
+    "visual",
+    "planning",
+    "wait",
+    "telemetry",
+)
 
 
 @dataclass(frozen=True)
@@ -37,21 +52,113 @@ class ParsedSession:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-def scan_sources(db_path: Path, sources: Iterable[SourceSpec]) -> dict[str, int]:
+def scan_sources(
+    db_path: Path,
+    sources: Iterable[SourceSpec],
+    modified_since: str | None = None,
+) -> dict[str, int]:
+    minimum_mtime = iso_timestamp(modified_since) if modified_since else None
     with connect(db_path) as conn:
-        counts = {"files": 0, "sessions": 0, "token_events": 0, "invocations": 0}
+        counts = {
+            "files": 0,
+            "files_seen": 0,
+            "files_skipped": 0,
+            "files_outside_window": 0,
+            "sessions": 0,
+            "token_events": 0,
+            "invocations": 0,
+        }
         for source in sources:
             for path in iter_jsonl_paths(source.path, source.label):
+                counts["files_seen"] += 1
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if minimum_mtime is not None and stat.st_mtime < minimum_mtime:
+                    counts["files_outside_window"] += 1
+                    continue
+                if scan_cache_matches(conn, path, source.label, stat.st_size, stat.st_mtime_ns):
+                    counts["files_skipped"] += 1
+                    continue
                 parsed = parse_session_file(path, source.label)
                 if parsed is None:
+                    update_scan_cache(conn, path, source.label, stat.st_size, stat.st_mtime_ns, "")
                     continue
+                clear_cached_source(conn, path)
                 upsert_session(conn, parsed)
                 counts["files"] += 1
                 counts["sessions"] += 1
                 counts["token_events"] += insert_token_events(conn, parsed)
                 counts["invocations"] += insert_invocations(conn, parsed)
+                update_scan_cache(
+                    conn,
+                    path,
+                    source.label,
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                    parsed.session_id,
+                )
         conn.commit()
     return counts
+
+
+def iso_timestamp(value: str) -> float:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized).timestamp()
+
+
+def scan_cache_matches(conn, path: Path, source_label: str, size_bytes: int, mtime_ns: int) -> bool:
+    row = conn.execute(
+        "select source_label, size_bytes, mtime_ns, parser_version from scan_cache where source_path = ?",
+        (str(path),),
+    ).fetchone()
+    return bool(
+        row
+        and row["source_label"] == source_label
+        and int(row["size_bytes"]) == size_bytes
+        and int(row["mtime_ns"]) == mtime_ns
+        and int(row["parser_version"]) == SCAN_PARSER_VERSION
+    )
+
+
+def clear_cached_source(conn, path: Path) -> None:
+    session_rows = conn.execute(
+        "select session_id from sessions where path = ?", (str(path),)
+    ).fetchall()
+    if not session_rows:
+        return
+    session_ids = [str(row["session_id"]) for row in session_rows]
+    conn.execute("delete from token_events where source_path = ?", (str(path),))
+    for session_id in session_ids:
+        conn.execute("delete from invocations where session_id = ?", (session_id,))
+        conn.execute("delete from sessions where session_id = ?", (session_id,))
+
+
+def update_scan_cache(
+    conn,
+    path: Path,
+    source_label: str,
+    size_bytes: int,
+    mtime_ns: int,
+    session_id: str,
+) -> None:
+    conn.execute(
+        """
+        insert or replace into scan_cache(
+          source_path, source_label, size_bytes, mtime_ns, parser_version, session_id, scanned_at
+        ) values(?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(path),
+            source_label,
+            size_bytes,
+            mtime_ns,
+            SCAN_PARSER_VERSION,
+            session_id,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
 
 
 def iter_jsonl_paths(path: Path, source_label: str = "") -> Iterable[Path]:
@@ -77,16 +184,7 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
     evidence_text: list[str] = []
     pending_calls: dict[str, dict[str, Any]] = {}
 
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-
-    for line_no, line in enumerate(lines, start=1):
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for line_no, row in iter_json_rows(path):
         payload = row.get("payload") or {}
         row_type = row.get("type")
         ts = row.get("timestamp") or payload.get("timestamp") or ""
@@ -128,6 +226,7 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
                     "started_at": ts,
                     "line_no": line_no,
                     "cwd": meta.get("cwd") or "",
+                    "operation_context": operation_context_from_call_payload(payload, command),
                 }
             continue
 
@@ -179,16 +278,7 @@ def parse_copilot_session_file(path: Path, source_label: str) -> ParsedSession |
     started_at = ""
     ended_at = ""
 
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None
-
-    for line_no, line in enumerate(lines, start=1):
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    for line_no, row in iter_json_rows(path):
 
         row_type = row.get("type")
         data = row.get("data") or {}
@@ -246,6 +336,7 @@ def parse_copilot_session_file(path: Path, source_label: str) -> ParsedSession |
                         "ended_at": ts,
                         "line_no": line_no,
                         "cwd": copilot_workspace(meta),
+                        "operation_context": operation_context(command),
                         "output_bytes": len(str(data.get("result") or "").encode("utf-8")),
                         "output_fingerprint": sha256_text(str(data.get("result") or "")),
                         "output_shape": output_shape(str(data.get("result") or "")),
@@ -327,6 +418,7 @@ def insert_token_events(conn, parsed: ParsedSession) -> int:
         )
         for invocation in parsed.metadata["invocations"]
     }
+    invocation_lines = sorted(invocation_by_line)
     for item in parsed.metadata["token_rows"]:
         if "row" in item:
             row = item["row"]
@@ -340,7 +432,9 @@ def insert_token_events(conn, parsed: ParsedSession) -> int:
             ts = item.get("ts") or ""
             model = item.get("model") or ""
         event_id = stable_id(parsed.path, "token", str(item["line_no"]))
-        invocation_id = nearest_invocation_id(invocation_by_line, int(item["line_no"]))
+        invocation_id = nearest_invocation_id(
+            invocation_by_line, invocation_lines, int(item["line_no"])
+        )
         conn.execute(
             """
             insert or replace into token_events(
@@ -367,11 +461,13 @@ def insert_token_events(conn, parsed: ParsedSession) -> int:
     return inserted
 
 
-def nearest_invocation_id(invocation_by_line: dict[int, str], token_line: int) -> str | None:
-    previous = [line for line in invocation_by_line if line <= token_line]
-    if not previous:
+def nearest_invocation_id(
+    invocation_by_line: dict[int, str], invocation_lines: list[int], token_line: int
+) -> str | None:
+    index = bisect_right(invocation_lines, token_line) - 1
+    if index < 0:
         return None
-    return invocation_by_line[max(previous)]
+    return invocation_by_line[invocation_lines[index]]
 
 
 def insert_invocations(conn, parsed: ParsedSession) -> int:
@@ -381,12 +477,13 @@ def insert_invocations(conn, parsed: ParsedSession) -> int:
         tool_id = stable_id("tool", normalize_command(command))
         conn.execute(
             """
-            insert or replace into tools(tool_id, normalized_command, executable, cwd, fingerprint, metadata_json)
-            values(?, ?, ?, ?, ?, ?)
+            insert or replace into tools(tool_id, normalized_command, operation_context, executable, cwd, fingerprint, metadata_json)
+            values(?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 tool_id,
                 normalize_command(command),
+                invocation.get("operation_context") or operation_context(command),
                 executable(command),
                 invocation.get("cwd") or parsed.workspace,
                 stable_id("cmd", normalize_command(command)),
@@ -532,6 +629,88 @@ def command_from_call_payload(payload: dict[str, Any]) -> str:
     return tool_context_from_payload(payload, {})
 
 
+def operation_context_from_call_payload(payload: dict[str, Any], command: str) -> str:
+    custom_input = payload.get("input")
+    if isinstance(custom_input, str) and custom_input.strip():
+        return operation_context_from_custom_input(custom_input)
+    name = str(payload.get("name") or "").strip()
+    named_context = operation_context_for_tool(name)
+    if name.lower() not in {"exec", "exec_command", "shell", "shell_command"} and named_context != "execution":
+        return named_context
+    return operation_context(command)
+
+
+def operation_context_from_custom_input(raw: str) -> str:
+    contexts: list[str] = []
+    nested_tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", raw)
+    commands = custom_commands(raw)
+    for name in nested_tools:
+        if name != "exec_command":
+            contexts.append(operation_context_for_tool(name))
+    contexts.extend(operation_context(command) for command in commands)
+    if nested_tools.count("exec_command") > len(commands):
+        contexts.append("execution")
+    return combine_operation_contexts(contexts or ["execution"])
+
+
+def custom_commands(raw: str) -> list[str]:
+    commands: list[str] = []
+    pattern = re.compile(r'(?:(?:"cmd")|\bcmd)\s*:\s*("(?:\\.|[^"\\])*")')
+    for match in pattern.finditer(raw):
+        try:
+            command = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(command, str) and command.strip():
+            commands.append(command.strip())
+    return commands
+
+
+def operation_context(command: str) -> str:
+    lowered = normalize_command(command).lower()
+    contexts: list[str] = []
+    if any(marker in lowered for marker in ("wait_agent", "write_stdin", " sleep ")):
+        contexts.append("wait")
+    if "apply_patch" in lowered:
+        contexts.append("edit")
+    if "update_plan" in lowered:
+        contexts.append("planning")
+    if any(marker in lowered for marker in ("pass_telemetry", "codex-session-windup", "toolburn pass")):
+        contexts.append("telemetry")
+    if any(marker in lowered for marker in ("validate", "unittest", "pytest", "playwright", "php -l", "nginx -t")):
+        contexts.append("validation")
+    if any(marker in lowered for marker in ("gh pr ", "git push", "git commit", "git merge", "install.sh", "deploy")):
+        contexts.append("delivery")
+    if re.search(r"(?:^|[;&|]\s*)(?:rg|sed|cat|head|tail|find)\b", lowered) or any(
+        marker in lowered for marker in ("git status", "git log", "git show", "git diff", "gh pr view")
+    ):
+        contexts.append("contextRecovery")
+    return combine_operation_contexts(contexts or ["execution"])
+
+
+def operation_context_for_tool(name: str) -> str:
+    lowered = name.lower()
+    if lowered in {"wait", "wait_agent", "write_stdin"}:
+        return "wait"
+    if "apply_patch" in lowered:
+        return "edit"
+    if "update_plan" in lowered:
+        return "planning"
+    if "web" in lowered:
+        return "web"
+    if "image" in lowered or "screenshot" in lowered:
+        return "visual"
+    return "execution"
+
+
+def combine_operation_contexts(values: Iterable[str]) -> str:
+    contexts: set[str] = set()
+    for value in values:
+        contexts.update(part for part in value.split("+") if part)
+    order = {name: index for index, name in enumerate(OPERATION_ORDER)}
+    return "+".join(sorted(contexts, key=lambda item: (order.get(item, len(order)), item)))
+
+
 def tool_context_from_custom_input(payload: dict[str, Any], raw: str) -> str:
     nested_tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", raw)
     if len(nested_tools) == 1 and nested_tools[0] == "exec_command":
@@ -551,6 +730,21 @@ def tool_context_from_custom_input(payload: dict[str, Any], raw: str) -> str:
             return f"multiple:{unique_tools[0]}"
         return f"mixed:{'+'.join(unique_tools)}"
     return tool_context_from_payload(payload, {})
+
+
+def iter_json_rows(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
+    try:
+        handle = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    with handle:
+        for line_no, line in enumerate(handle, start=1):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                yield line_no, row
 
 
 def tool_context_from_payload(payload: dict[str, Any], arguments: dict[str, Any]) -> str:

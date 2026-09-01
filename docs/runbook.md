@@ -47,9 +47,7 @@ toolburn pass current --format json
 toolburn inspect '<hotspot-id>' --session '<session-id>' --turn '<turn-id>' --pretty
 ```
 
-This scans the default local Codex and OpenClaw session roots, writes a reusable
-SQLite database under `/tmp`, and prints top actors and top tools for the
-lookback window.
+This scans default local Codex and OpenClaw session files modified within the requested window, writes a reusable SQLite database under `/tmp`, and prints top actors and actor-linked operation contexts. Later runs skip unchanged in-window files and reparse only active or changed evidence. Use explicit `toolburn scan` to ingest full history.
 
 Use an explicit database when you want repeatable drilldown:
 

@@ -20,7 +20,7 @@ from toolburn.pass_receipt import (
     format_pass_markdown,
     inspect_hotspot,
 )
-from toolburn.report import export_json, format_explain, format_table, du_report, explain_report, top_report
+from toolburn.report import burn_path_report, export_json, format_explain, format_table, du_report, explain_report, top_report
 from toolburn.scan import SourceSpec, scan_sources
 from toolburn.schema import initialize_database, table_names
 
@@ -184,10 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         if not sources:
             parser.error("scan requires at least one --source, --codex, --openclaw, or --copilot path")
         counts = scan_sources(args.db, sources)
-        print(
-            "scanned {files} files, {sessions} sessions, {token_events} token events, "
-            "{invocations} invocations".format(**counts)
-        )
+        print(format_scan_counts(counts))
         return 0
 
     if args.command in {"recent", "24h"}:
@@ -197,11 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         if not args.no_scan:
             if not sources:
                 parser.error("no default Codex/OpenClaw/Copilot session roots found")
-            counts = scan_sources(db_path, sources)
-            print(
-                "scanned {files} files, {sessions} sessions, {token_events} token events, "
-                "{invocations} invocations".format(**counts)
-            )
+            counts = scan_sources(db_path, sources, modified_since=since)
+            print(format_scan_counts(counts))
         print(f"since {since}")
         if args.actor_type:
             print(f"actor_type {args.actor_type}")
@@ -219,12 +213,11 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         print("")
-        print("Top tool-contexts")
+        print("Top burn paths")
         print(
             format_table(
-                top_report(
+                burn_path_report(
                     db_path,
-                    group_by="tool",
                     limit=args.limit,
                     since=since,
                     actor_type=args.actor_type,
@@ -382,6 +375,21 @@ def existing_default_sources(args: argparse.Namespace) -> list[SourceSpec]:
 def hours_ago_iso(hours: float) -> str:
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     return since.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def format_scan_counts(counts: dict[str, int]) -> str:
+    changed = int(counts.get("files") or 0)
+    skipped = int(counts.get("files_skipped") or 0)
+    outside_window = int(counts.get("files_outside_window") or 0)
+    prefix = f"scanned {changed} changed files"
+    if skipped:
+        prefix += f", skipped {skipped} unchanged"
+    if outside_window:
+        prefix += f", ignored {outside_window} outside window"
+    return (
+        f"{prefix}, {counts['sessions']} sessions, {counts['token_events']} token events, "
+        f"{counts['invocations']} invocations"
+    )
 
 
 def default_recent_db_path() -> Path:

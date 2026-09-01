@@ -14,6 +14,8 @@
 - Raw private evidence is excluded from git.
 - Reports are compact enough to hand to an agent without flooding context.
 - Tool reports must distinguish nearby transcript context from proven tool-caused model calls.
+- Recent reports must link operation context to the actor that incurred the spend and retain exact tool reports for drilldown.
+- Repeated recent scans must reuse unchanged evidence without hiding changes to active session files.
 - Token events without a nearby invocation must name the actor as `no-tool-context:<actor>`, not collapse into `unknown.tool`.
 - Pass selection must use `$CODEX_THREAD_ID`, an exact session UUID, an exact JSONL path, or an exact turn; it must never guess the newest session.
 - Pass receipts omit prompts, messages, raw arguments, and raw output while retaining enough operation structure to locate repeated cost.
