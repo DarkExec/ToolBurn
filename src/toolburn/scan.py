@@ -11,13 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from toolburn.activity import bundle_activity, output_process_ids, patch_paths, process_ids
 from toolburn.schema import connect
 
 
 TOKEN_EVENT_TYPE = "token_count"
 ROLLOUT_GLOB = "rollout-*.jsonl"
 COPILOT_EVENTS_GLOB = "events.jsonl"
-SCAN_PARSER_VERSION = 3
+SCAN_PARSER_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,7 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
     invocations: list[dict[str, Any]] = []
     evidence_text: list[str] = []
     pending_calls: dict[str, dict[str, Any]] = {}
+    process_commands: dict[str, dict[str, str]] = {}
 
     for line_no, row in iter_json_rows(path):
         payload = row.get("payload") or {}
@@ -208,13 +210,24 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
             )
             command = command_from_call_payload(payload)
             if command:
+                cwd = call_workdir_from_payload(payload) or str(meta.get("cwd") or "")
+                bundle = bundle_from_call_payload(payload, command, cwd)
+                linked_processes = [
+                    process_commands[process_id]
+                    for process_id in bundle.get("process_ids", [])
+                    if process_id in process_commands
+                ]
+                if len(linked_processes) == 1:
+                    bundle["parent_command"] = linked_processes[0]["command"]
+                    bundle["parent_cwd"] = linked_processes[0]["cwd"]
+                    bundle["activity"] = bundle_activity(bundle, cwd)
                 pending_calls[call_id] = {
                     "call_id": call_id,
                     "command": command,
                     "started_at": ts,
                     "line_no": line_no,
-                    "cwd": meta.get("cwd") or "",
-                    "bundle": bundle_from_call_payload(payload, command),
+                    "cwd": cwd,
+                    "bundle": bundle,
                 }
             continue
 
@@ -232,6 +245,13 @@ def parse_session_file(path: Path, source_label: str) -> ParsedSession | None:
                     }
                 )
                 invocations.append(pending)
+                commands = pending["bundle"].get("commands", [])
+                if commands:
+                    for process_id in output_process_ids(output):
+                        process_commands[process_id] = {
+                            "command": str(commands[0]),
+                            "cwd": str(pending.get("cwd") or ""),
+                        }
 
     session_id = str(meta.get("id") or stable_id(path, "session"))
     actor_id, actor_type, confidence = infer_actor_id(
@@ -316,6 +336,12 @@ def parse_copilot_session_file(path: Path, source_label: str) -> ParsedSession |
         if row_type == "tool.execution_complete" and isinstance(data, dict):
             command = copilot_command_from_tool_complete(data)
             if command:
+                bundle = {
+                    "wrapper": "github-copilot",
+                    "tools": [str(data.get("toolName") or "tool")],
+                    "commands": [command],
+                }
+                bundle["activity"] = bundle_activity(bundle, copilot_workspace(meta))
                 invocations.append(
                     {
                         "call_id": data.get("toolCallId") or stable_id(path, "tool", line_no),
@@ -324,11 +350,7 @@ def parse_copilot_session_file(path: Path, source_label: str) -> ParsedSession |
                         "ended_at": ts,
                         "line_no": line_no,
                         "cwd": copilot_workspace(meta),
-                        "bundle": {
-                            "wrapper": "github-copilot",
-                            "tools": [str(data.get("toolName") or "tool")],
-                            "commands": [command],
-                        },
+                        "bundle": bundle,
                         "output_bytes": len(str(data.get("result") or "").encode("utf-8")),
                         "output_fingerprint": sha256_text(str(data.get("result") or "")),
                         "output_shape": output_shape(str(data.get("result") or "")),
@@ -626,21 +648,51 @@ def command_from_call_payload(payload: dict[str, Any]) -> str:
     return tool_context_from_payload(payload, {})
 
 
-def bundle_from_call_payload(payload: dict[str, Any], command: str) -> dict[str, Any]:
+def bundle_from_call_payload(
+    payload: dict[str, Any], command: str, cwd: str = ""
+) -> dict[str, Any]:
     wrapper = str(payload.get("name") or payload.get("type") or "tool")
     custom_input = payload.get("input")
     if isinstance(custom_input, str) and custom_input.strip():
         tools = re.findall(r"\btools\.([A-Za-z0-9_]+)\s*\(", custom_input)
-        return {
+        bundle = {
             "wrapper": wrapper,
             "tools": tools or [wrapper],
             "commands": custom_commands(custom_input),
+            "patch_paths": patch_paths(custom_input),
+            "process_ids": process_ids(custom_input),
         }
-    return {
+        bundle["activity"] = bundle_activity(bundle, cwd)
+        return bundle
+    bundle = {
         "wrapper": wrapper,
         "tools": [wrapper],
         "commands": [command] if command else [],
     }
+    bundle["activity"] = bundle_activity(bundle, cwd)
+    return bundle
+
+
+def call_workdir_from_payload(payload: dict[str, Any]) -> str:
+    for value in (payload.get("input"), payload.get("arguments")):
+        if isinstance(value, dict):
+            workdir = value.get("workdir") or value.get("cwd")
+            if isinstance(workdir, str):
+                return workdir.strip()
+        if isinstance(value, str):
+            for key in ("workdir", "cwd"):
+                pattern = re.compile(
+                    rf'(?:(?:"{key}")|\b{key})\s*:\s*("(?:\\.|[^"\\])*")'
+                )
+                match = pattern.search(value)
+                if match:
+                    try:
+                        workdir = json.loads(match.group(1))
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(workdir, str):
+                        return workdir.strip()
+    return ""
 
 
 def custom_commands(raw: str) -> list[str]:

@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from toolburn.cli import build_parser, main
-from toolburn.report import episode_report
+from toolburn.report import episode_report, tool_work_report
 from toolburn.scan import bundle_from_call_payload, command_from_call_payload
 from toolburn.semantics import SemanticCatalogError, load_semantic_catalog
 
@@ -504,6 +504,165 @@ def distinct_bundle_rows() -> list[dict]:
     return rows
 
 
+def process_linkage_rows() -> list[dict]:
+    rows = [
+        {
+            "timestamp": "2026-09-02T10:00:00.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "process-linkage-session",
+                "timestamp": "2026-09-02T10:00:00.000Z",
+                "cwd": "/srv/voice",
+                "originator": "codex",
+            },
+        },
+        {
+            "timestamp": "2026-09-02T10:00:01.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "call-validation",
+                "name": "exec",
+                "input": (
+                    'const r = await tools.exec_command({cmd:"./scripts/validate.sh",'
+                    'workdir:"/srv/voice"}); text(r.output); '
+                    'if(r.session_id) text(`SESSION_ID=${r.session_id}`);'
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-09-02T10:00:02.000Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "call-validation",
+                "output": "Script running\nSESSION_ID=42",
+            },
+        },
+        {
+            "timestamp": "2026-09-02T10:00:03.000Z",
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 80,
+                        "output_tokens": 5,
+                        "total_tokens": 105,
+                    }
+                },
+            },
+        },
+    ]
+    for index in (1, 2):
+        rows.extend(
+            [
+                {
+                    "timestamp": f"2026-09-02T10:00:0{index + 3}.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "call_id": f"call-poll-{index}",
+                        "name": "exec",
+                        "input": (
+                            "const r = await tools.write_stdin({session_id:42,chars:\"\","
+                            "yield_time_ms:30000}); text(r.output);"
+                        ),
+                    },
+                },
+                {
+                    "timestamp": f"2026-09-02T10:00:0{index + 4}.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": f"call-poll-{index}",
+                        "output": "still running" if index == 1 else "validation ok",
+                    },
+                },
+                {
+                    "timestamp": f"2026-09-02T10:00:0{index + 5}.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 200,
+                                "cached_input_tokens": 190,
+                                "output_tokens": 5,
+                                "total_tokens": 205,
+                            }
+                        },
+                    },
+                },
+            ]
+        )
+    return rows
+
+
+def repeated_heartbeat_rows() -> list[dict]:
+    rows = [fixture_rows()[0]]
+    for index, (timestamp, total) in enumerate(
+        zip(
+            (
+                "2026-06-01T20:00:00.000Z",
+                "2026-06-01T20:30:00.000Z",
+                "2026-06-01T21:00:00.000Z",
+                "2026-06-01T21:30:00.000Z",
+            ),
+            (1000, 1400, 1900, 2500),
+        ),
+        start=1,
+    ):
+        call_id = f"heartbeat-{index}"
+        rows.extend(
+            [
+                {
+                    "timestamp": timestamp,
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": "shell_command",
+                        "arguments": json.dumps(
+                            {
+                                "command": (
+                                    "python3 state/ops-harness/scripts/run_watchdog_cycle.py "
+                                    "--dispatch-mode real"
+                                )
+                            }
+                        ),
+                    },
+                },
+                {
+                    "timestamp": timestamp.replace("00.000Z", "01.000Z"),
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": '{"name":"GOS watchdog 30m","ok":true}',
+                    },
+                },
+                {
+                    "timestamp": timestamp.replace("00.000Z", "02.000Z"),
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": total - 10,
+                                "cached_input_tokens": total - 30,
+                                "output_tokens": 10,
+                                "total_tokens": total,
+                            }
+                        },
+                    },
+                },
+            ]
+        )
+    return rows
+
+
 class CliTests(unittest.TestCase):
     def test_custom_wrapper_combines_nested_tools_canonically(self) -> None:
         payload = {
@@ -517,13 +676,14 @@ class CliTests(unittest.TestCase):
             command_from_call_payload(payload),
             "mixed:exec_command+write_stdin",
         )
+        bundle = bundle_from_call_payload(payload, command_from_call_payload(payload))
+        self.assertEqual(bundle["wrapper"], "exec")
+        self.assertEqual(bundle["tools"], ["write_stdin", "exec_command"])
+        self.assertEqual(bundle["commands"], ["git status --short"])
+        self.assertEqual(bundle["process_ids"], ["7"])
         self.assertEqual(
-            bundle_from_call_payload(payload, command_from_call_payload(payload)),
-            {
-                "wrapper": "exec",
-                "tools": ["write_stdin", "exec_command"],
-                "commands": ["git status --short"],
-            },
+            bundle["activity"]["display"],
+            "read/search git status --short",
         )
 
     def test_help_returns_zero(self) -> None:
@@ -616,10 +776,10 @@ class CliTests(unittest.TestCase):
                 )
             output = stdout.getvalue()
             self.assertIn("Top actors", output)
-            self.assertIn("Top factual episodes", output)
+            self.assertIn("Top tool work", output)
             self.assertIn("background.openclaw.gos-watchdog-30m", output)
             self.assertIn("run_watchdog_cycle.py", output)
-            self.assertIn("Semantic coverage", output)
+            self.assertNotIn("Semantic coverage", output)
             self.assertIn("uncached", output)
 
     def test_24h_shortcut_prints_recent_burn(self) -> None:
@@ -652,8 +812,8 @@ class CliTests(unittest.TestCase):
             self.assertIn("scanned", output)
             self.assertIn("since ", output)
             self.assertIn("Top actors", output)
-            self.assertIn("Top factual episodes", output)
-            self.assertIn("Semantic coverage", output)
+            self.assertIn("Top tool work", output)
+            self.assertNotIn("Semantic coverage", output)
 
     def test_recent_shortcuts_resolve_to_exact_hours(self) -> None:
         parser = build_parser()
@@ -747,6 +907,118 @@ class CliTests(unittest.TestCase):
             bundles = [json.loads(row["bundle_json"])["commands"] for row in episodes]
             self.assertIn(["rg -n owner .", "git status --short"], bundles)
             self.assertIn(["pytest -q", "git push origin main"], bundles)
+
+    def test_tool_work_links_polling_to_originating_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-09-02T10-00-00-test.jsonl"
+            db_path = root / "toolburn.sqlite"
+            write_jsonl(evidence, process_linkage_rows())
+            main(["scan", "--db", str(db_path), "--codex", str(evidence)])
+
+            rows = tool_work_report(db_path, limit=10)
+            poll = next(row for row in rows if row["activity"]["action"] == "poll")
+            self.assertEqual(poll["calls"], 2)
+            self.assertEqual(poll["sessions"], 1)
+            self.assertEqual(
+                poll["activity"]["display"],
+                "poll /srv/voice/scripts/validate.sh",
+            )
+
+    def test_repeated_background_command_is_one_cumulative_tool_work_row(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            evidence = root / "rollout-2026-06-01T20-00-00-heartbeat.jsonl"
+            db_path = root / "toolburn.sqlite"
+            write_jsonl(evidence, repeated_heartbeat_rows())
+            main(["scan", "--db", str(db_path), "--openclaw", str(evidence)])
+
+            rows = tool_work_report(db_path, limit=10)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["calls"], 4)
+            self.assertEqual(rows[0]["raw_tokens"], 6800)
+            self.assertEqual(
+                rows[0]["activity"]["display"],
+                "run /root/.openclaw/workspace/state/ops-harness/scripts/run_watchdog_cycle.py",
+            )
+            self.assertIn("background.openclaw.gos-watchdog-30m", rows[0]["label"])
+
+    def test_apply_patch_bundle_retains_affected_target(self) -> None:
+        payload = {
+            "name": "exec",
+            "input": (
+                'const patch = "*** Begin Patch\\n'
+                "*** Update File: sites/easyaivoice.com/public/run-submit.php\\n"
+                "*** Update File: sites/easyaivoice.com/public/status.php\\n"
+                '*** End Patch"; text(await tools.apply_patch(patch));'
+            ),
+        }
+        bundle = bundle_from_call_payload(payload, "apply_patch", "/srv/voice")
+        self.assertEqual(
+            bundle["patch_paths"],
+            [
+                "sites/easyaivoice.com/public/run-submit.php",
+                "sites/easyaivoice.com/public/status.php",
+            ],
+        )
+        self.assertEqual(
+            bundle["activity"]["display"],
+            "edit /srv/voice/sites/easyaivoice.com/public/* (2 files)",
+        )
+
+    def test_non_read_command_does_not_promote_repository_slug_to_path(self) -> None:
+        command = "gh pr merge 197 --repo DarkExec/app --squash && gh pr view 197 --repo DarkExec/app"
+        bundle = bundle_from_call_payload(
+            {
+                "name": "exec_command",
+                "arguments": {
+                    "cmd": command,
+                    "workdir": "/tmp",
+                },
+            },
+            command,
+            "/tmp",
+        )
+        self.assertEqual(bundle["activity"]["action"], "run")
+        self.assertIn("gh pr merge 197 --repo DarkExec/app", bundle["activity"]["display"])
+        self.assertNotIn("/tmp/DarkExec/app", bundle["activity"]["display"])
+
+    def test_inline_interpreter_does_not_claim_mentioned_file_was_executed(self) -> None:
+        command = 'php -r \'require "includes/auth.php"; echo "ok";\''
+        bundle = bundle_from_call_payload(
+            {
+                "name": "exec_command",
+                "arguments": {
+                    "cmd": command,
+                    "workdir": "/srv/site",
+                },
+            },
+            command,
+            "/srv/site",
+        )
+        self.assertEqual(bundle["activity"]["action"], "run")
+        self.assertIn("php -r", bundle["activity"]["display"])
+        self.assertNotEqual(
+            bundle["activity"]["display"],
+            "run /srv/site/includes/auth.php",
+        )
+
+    def test_read_only_shell_bundle_promotes_the_file_target(self) -> None:
+        command = (
+            'cat AGENTS.md; rg -n "ToolBurn|heartbeat" '
+            "/root/.codex/memories/MEMORY.md | head -100; "
+            "git status --short; git rev-parse HEAD; git log -5 --oneline"
+        )
+        bundle = bundle_from_call_payload(
+            {"name": "exec_command"},
+            command,
+            "/srv/dark/repos/toolburn",
+        )
+        self.assertEqual(bundle["activity"]["action"], "read/search")
+        self.assertIn(
+            "/root/.codex/memories/MEMORY.md",
+            bundle["activity"]["display"],
+        )
 
     def test_scan_skips_unchanged_sources_and_reparses_changed_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

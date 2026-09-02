@@ -5,8 +5,7 @@ Toolburn is a local token burn profiler for coding agents.
 The public documentation is rendered from this README at [toolburn.com](https://toolburn.com/).
 
 Think of it as `ncdu` for token usage: it scans the session evidence already on
-your machine, groups spend by actor, tool, session, and source, then exposes
-the highest-cost factual episodes worth investigating.
+your machine, groups spend by actor, session, and mechanically derived tool work, then exposes the cumulative actions and raw targets consuming the most tokens.
 
 Toolburn is read-only. It does not call models, intercept prompts, or upload
 anything. Phase 1 is an offline CLI for answering a very practical question:
@@ -49,16 +48,18 @@ Shortcut:
 toolburn 24h
 ```
 
-That scans session files modified within the requested window and prints the top actors and highest-burning factual episodes. Unchanged in-window files are reused from the local database, so the normal command only reparses active or changed sessions. Use explicit `toolburn scan` when you want to build full history.
+That scans session files modified within the requested window and prints the top actors and top cumulative tool work. Unchanged in-window files are reused from the local database, so the normal command only reparses active or changed sessions. Use explicit `toolburn scan` when you want to build full history.
 
-Actor and session totals are token spend. A factual episode groups token events by the exact nearby invocation observed in the transcript and retains its stable episode ID, actor, session, time, ordered tools, and bounded exact commands. The association is context evidence, not proof that the tools caused the subsequent model usage. Episodes rank by uncached tokens so large cached context does not hide the model-visible work most worth inspecting.
+Actor and session totals are token spend. Top tool work groups factual episodes by actor plus a mechanically derived action and raw target, ranks cumulative raw burn, and shows cached and uncached tokens, calls, and distinct sessions. It turns generic wrappers into evidence such as `poll darkexec_app.remote_cli`, `read/search /root/.codex/memories/MEMORY.md`, `run scripts/incident_preflight.py`, or `edit public/*`. The association is nearby transcript context, not proof that the tool caused subsequent model usage.
 
 If a token event has no nearby tool invocation, Toolburn reports it as
 `no-tool-context:<actor>`. That usually means a model-only turn, final answer,
 or adapter/source gap, and should be diagnosed at the actor or session level
 instead of as a fake `unknown.tool`.
 
-When Codex wraps several underlying calls, Toolburn stores their observed bundle on that invocation instead of assigning a global semantic category to the deduplicated tool row.
+Toolburn extracts executed scripts and modules, read/search paths, and affected patch paths from raw calls. When a long-running `exec_command` returns a process ID, later `write_stdin` calls inherit that exact originating command target. When evidence is opaque, Toolburn keeps the literal tool or command instead of inventing purpose.
+
+Factual episodes remain in the local database as stable drilldown evidence, but the default recent report aggregates them into tool work so repeated modest calls can outrank an isolated expensive turn.
 
 Use `toolburn top --db /tmp/toolburn-recent.sqlite --by tool` for the cross-episode command view.
 
@@ -86,7 +87,7 @@ Toolburn reads an optional local catalog from `~/.config/toolburn/semantics.json
 }
 ```
 
-Assignments are applied at report time, so adding or correcting semantics backfills the normalized firehose without rewriting token events, invocations, or tools. Versioned definitions, coverage, assignments outside the selected window, and unclassified episodes remain explicit. Toolburn v1 permits one semantic assignment per episode so semantic totals cannot silently overlap.
+Assignments are applied at report time, so adding or correcting semantics backfills the normalized firehose without rewriting token events, invocations, or tools. Versioned definitions, coverage, assignments outside the selected window, and unclassified episodes remain explicit. Toolburn v1 permits one semantic assignment per episode so semantic totals cannot silently overlap. Recent reports omit this section when no catalog exists; action-plus-target reporting never depends on semantic labels.
 
 See supported evidence sources:
 

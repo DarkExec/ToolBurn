@@ -14,7 +14,8 @@
 - Raw private evidence is excluded from git.
 - Reports are compact enough to hand to an agent without flooding context.
 - Tool reports must distinguish nearby transcript context from proven tool-caused model calls.
-- Recent reports must expose stable factual episode identity, actor, time, and observed tool bundle without promoting heuristic categories into fact rows.
+- Recent reports must rank cumulative tool work by actor plus mechanically derived action and raw target while retaining stable factual episodes underneath and never promoting heuristic purpose into fact rows.
+- A fresh installation with no semantic catalog must resolve executed scripts, read/search paths, affected patch paths, and poll-to-origin process links when the transcript contains that evidence.
 - Repeated recent scans must reuse unchanged evidence without hiding changes to active session files.
 - Semantic definitions must be versioned, assignments must reference exact episode IDs, semantic coverage must stay explicit, and applying semantics must not rewrite factual evidence.
 - Token events without a nearby invocation must name the actor as `no-tool-context:<actor>`, not collapse into `unknown.tool`.

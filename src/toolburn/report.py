@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from toolburn.activity import bundle_activity
 from toolburn.schema import connect
 
 
@@ -120,6 +121,85 @@ def format_episode_table(rows: list[dict]) -> str:
         row["label"] = episode_label(row)
         formatted.append(row)
     return format_table(formatted)
+
+
+def tool_work_report(
+    db_path: Path,
+    limit: int = 20,
+    since: str | None = None,
+    actor_type: str | None = None,
+) -> list[dict]:
+    return summarize_tool_work(
+        episode_report(db_path, limit=None, since=since, actor_type=actor_type),
+        limit=limit,
+    )
+
+
+def summarize_tool_work(episodes: list[dict], limit: int = 20) -> list[dict]:
+    groups: dict[tuple[str, str], dict] = {}
+    for episode in episodes:
+        raw_bundle = episode.get("bundle_json")
+        if not isinstance(raw_bundle, str) or not raw_bundle:
+            continue
+        try:
+            bundle = json.loads(raw_bundle)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(bundle, dict):
+            continue
+        activity = bundle.get("activity")
+        if not isinstance(activity, dict):
+            activity = bundle_activity(bundle)
+        activity_key = str(activity.get("key") or "")
+        display = str(activity.get("display") or "unknown tool work")
+        actor = str(episode.get("actor_id") or "unknown")
+        key = (actor, activity_key or display)
+        group = groups.setdefault(
+            key,
+            {
+                "label": f"{actor} -> {display}",
+                "actor_id": actor,
+                "activity": activity,
+                "events": 0,
+                "calls": 0,
+                "sessions_set": set(),
+                "raw_tokens": 0,
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+                "uncached_tokens": 0,
+            },
+        )
+        group["events"] += int(episode.get("events") or 0)
+        group["calls"] += 1
+        group["sessions_set"].add(str(episode.get("session_id") or ""))
+        for field in (
+            "raw_tokens",
+            "input_tokens",
+            "cached_input_tokens",
+            "output_tokens",
+            "uncached_tokens",
+        ):
+            group[field] += int(episode.get(field) or 0)
+    rows = []
+    for group in groups.values():
+        group["sessions"] = len(group.pop("sessions_set"))
+        rows.append(group)
+    return sorted(
+        rows,
+        key=lambda row: (-int(row["raw_tokens"]), str(row["label"])),
+    )[:limit]
+
+
+def format_tool_work_table(rows: list[dict]) -> str:
+    if not rows:
+        return "no attributed tool work"
+    return "\n".join(
+        "{raw_tokens:>12} raw  {cached_input_tokens:>12} cached  "
+        "{uncached_tokens:>10} uncached  {calls:>5} calls  "
+        "{sessions:>3} sessions  {label}".format(**row)
+        for row in rows
+    )
 
 
 def episode_label(row: dict) -> str:

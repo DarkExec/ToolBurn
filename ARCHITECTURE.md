@@ -32,6 +32,7 @@ site/
   public/
 src/toolburn/
   __init__.py
+  activity.py
   cli.py
   pass_receipt.py
   report.py
@@ -68,10 +69,10 @@ The small `site/` wrapper publishes this repository's README at toolburn.com. It
 The factual data flow is:
 
 ```text
-session evidence -> actor + invocation + token event -> factual episode -> optional semantic assignment
+session evidence -> actor + invocation + token event -> factual episode -> action + raw target -> optional semantic assignment
 ```
 
-The schema starts with actors, sessions, tools, invocations, and token events. Invocation rows retain the exact observed tool bundle; token events grouped by their nearby invocation form stable factual episodes. This proximity is evidence for investigation, not proof that a tool caused later token use. Optional local semantics are versioned assignments over those episode IDs and are applied at report time, never written onto globally deduplicated tools or used to rewrite the factual ledger. Adapters and policy files arrive after the offline profiler can prove value against real traces.
+The schema starts with actors, sessions, tools, invocations, and token events. Invocation rows retain the exact observed tool bundle; token events grouped by their nearby invocation form stable factual episodes. A deterministic normalization layer extracts actions and raw targets from commands, patch paths, and process-link evidence, then aggregates cumulative tool work without requiring semantic labels. This proximity is evidence for investigation, not proof that a tool caused later token use. Optional local semantics are versioned assignments over episode IDs and are applied at report time, never written onto globally deduplicated tools or used to rewrite the factual ledger.
 
 Pass receipts use the exact Codex session identity rather than guessing the newest file. The shared parser owns completed-turn boundaries, usage deltas, tool-cost categories, repetition signatures, failure-evidence confidence, and privacy-safe output. A structured nonzero exit or explicit tool failure is confirmed; error-shaped text is only possible, and output-only orchestration is labeled incomplete because it discarded exit status. Receipts expose factual failure, repetition, and largest-output hotspots; `toolburn inspect` resolves one exact hotspot into bounded, redacted, local-private evidence without persisting it. Optional DarkExec episode evidence may identify the preceding Harness boundary; its absence never prevents a generic receipt. Toolburn reports measurements only. Harness Ops owns pass method and Harness Gym owns comparison judgment.
 
