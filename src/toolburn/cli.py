@@ -20,7 +20,7 @@ from toolburn.pass_receipt import (
     format_pass_markdown,
     inspect_hotspot,
 )
-from toolburn.report import episode_report, export_json, format_episode_table, format_explain, format_table, du_report, explain_report, top_report
+from toolburn.report import episode_report, export_json, format_explain, format_table, format_tool_work_table, du_report, explain_report, summarize_tool_work, top_report
 from toolburn.scan import SourceSpec, scan_sources
 from toolburn.schema import initialize_database, table_names
 from toolburn.semantics import DEFAULT_SEMANTICS_PATH, SemanticCatalogError, format_semantic_summary, load_semantic_catalog, semantic_summary
@@ -235,11 +235,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         print("")
-        print("Top factual episodes")
-        print(format_episode_table(episodes[: args.limit]))
-        print("")
-        print("Semantic coverage")
-        print(format_semantic_summary(semantic_summary(episodes, catalog), semantics_path))
+        print("Top tool work")
+        print(format_tool_work_table(summarize_tool_work(episodes, limit=args.limit)))
+        if catalog is not None:
+            print("")
+            print("Semantic coverage")
+            print(format_semantic_summary(semantic_summary(episodes, catalog), semantics_path))
         return 0
 
     if args.command == "sources":

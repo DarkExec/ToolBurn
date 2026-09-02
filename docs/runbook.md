@@ -49,7 +49,7 @@ toolburn pass current --format json
 toolburn inspect '<hotspot-id>' --session '<session-id>' --turn '<turn-id>' --pretty
 ```
 
-This scans default local Codex and OpenClaw session files modified within the requested window, writes a reusable SQLite database under `/tmp`, and prints top actors, factual episodes, and optional semantic coverage. Later runs skip unchanged in-window files and reparse only active or changed evidence. Use explicit `toolburn scan` to ingest full history.
+This scans default local Codex and OpenClaw session files modified within the requested window, writes a reusable SQLite database under `/tmp`, and prints top actors plus cumulative action-and-target tool work. Later runs skip unchanged in-window files and reparse only active or changed evidence. Use explicit `toolburn scan` to ingest full history. Semantic coverage appears only when a catalog exists; fresh installations fall back to raw commands, scripts, paths, modules, and process links.
 
 Keep private semantic assignments outside git, normally at `~/.config/toolburn/semantics.json`. Use `toolburn recent --hours 24 --semantics /exact/catalog.json` to test an alternate catalog. Catalog changes are applied over stable episode IDs at report time; they do not mutate the normalized token or invocation ledger.
 

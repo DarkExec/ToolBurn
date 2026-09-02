@@ -28,6 +28,7 @@ require_file docs/exec-plans/active/README.md
 require_file docs/exec-plans/active/toolburn-3-phase-plan.md
 require_file docs/exec-plans/completed/README.md
 require_file src/toolburn/__init__.py
+require_file src/toolburn/activity.py
 require_file src/toolburn/cli.py
 require_file src/toolburn/pass_receipt.py
 require_file src/toolburn/report.py
